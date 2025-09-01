@@ -2,7 +2,7 @@ name: riverty-snapshots
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # alle 30 Minuten
+    - cron: '*/30 * * * *'     # alle 30 Minuten
   workflow_dispatch:
 
 permissions:
@@ -17,86 +17,87 @@ concurrency:
 jobs:
   snap-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Playwright (Chromium)
+      - name: Prepare output
         run: |
-          npm init -y
-          npm i -D playwright
-          npx playwright install --with-deps chromium
+          mkdir -p public/470-842-351 public/166-544-332
+          printf '' > public/.nojekyll
 
-      - name: Render snapshots (1920x1080 PNG) & build static pages
+      - name: Snapshot 470-842-351 via PhantomJsCloud
+        env:
+          PHANTOM_KEY: ${{ secrets.PHANTOM_KEY }}
         run: |
-          mkdir -p public
-          cat > script.js <<'JS'
-          const fs = require('fs');
-          const path = require('path');
-          const { chromium } = require('playwright');
-
-          async function snap(id, url) {
-            const outDir = path.join('public', id);
-            fs.mkdirSync(outDir, { recursive: true });
-            const imgPath   = path.join(outDir, 'image.png');
-            const htmlPath  = path.join(outDir, 'index.html');
-            const debugPath = path.join(outDir, 'debug.html');
-
-            const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
-            const ctx = await browser.newContext({
-              viewport: { width: 1920, height: 1080 }
-            });
-            const page = await ctx.newPage();
-
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
-
-            // Warte auf Überschrift im Content
-            await page.waitForSelector('#__next h1, #__next h2', { state: 'visible', timeout: 60000 });
-
-            // Warten bis ein Bild geladen ist
-            await page.waitForFunction(() =>
-              Array.from(document.images).some(img => img.complete && img.naturalWidth > 0),
-              { timeout: 60000 }
-            );
-
-            // Debug speichern (HTML-Quelle nach Render)
-            fs.writeFileSync(debugPath, await page.content(), 'utf8');
-
-            await page.screenshot({ path: imgPath, type: 'png', fullPage: false });
-
-            await browser.close();
-
-            const html = `<!doctype html>
-          <html lang="de"><head>
-          <meta charset="utf-8">
+          JSON='{
+            "url":"https://our.riverty.com/se/470-842-351",
+            "renderType":"png",
+            "outputAsJson":false,
+            "requestSettings":{"waitInterval":5000},
+            "renderSettings":{
+              "viewport":{"width":1920,"height":1080},
+              "clipRectangle":{"top":0,"left":0,"width":1920,"height":1080},
+              "zoomFactor":1
+            }
+          }'
+          REQ=$(printf '%s' "$JSON" | base64 -w0)
+          URL="https://phantomjscloud.com/api/browser/v2/${PHANTOM_KEY}/?requestBase64=${REQ}"
+          curl -fsSL "$URL" -o public/470-842-351/image.png
+          # Fallback: wenn keine PNG kam, Fehler ausgeben
+          file public/470-842-351/image.png | grep -qi 'PNG image' || { echo "No PNG received"; exit 1; }
+          cat > public/470-842-351/index.html <<'HTML'
+          <!doctype html><html lang="de"><head>
+          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Riverty 470-842-351</title>
           <meta http-equiv="refresh" content="1800">
-          <title>Riverty ${id}</title>
-          <style>
-            html,body{margin:0;height:100%;background:#000}
-            img{width:100%;height:100%;object-fit:contain}
-          </style>
-          </head><body>
-          <img src="image.png" alt="Riverty ${id}">
-          </body></html>`;
-            fs.writeFileSync(htmlPath, html);
-          }
+          <style>html,body{height:100%;margin:0;background:#000}img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
+          </head><body><img src="image.png" alt="Riverty 470-842-351"></body></html>
+          HTML
 
-          (async () => {
-            await snap('470-842-351', 'https://our.riverty.com/se/470-842-351');
-            await snap('166-544-332', 'https://our.riverty.com/se/166-544-332');
-            fs.writeFileSync('public/.nojekyll', '');
-            fs.writeFileSync('public/index.html', '<h1>Riverty Snapshots</h1><ul><li><a href="./470-842-351/">470-842-351</a></li><li><a href="./166-544-332/">166-544-332</a></li></ul>');
-          })().catch(e => { console.error(e); process.exit(1); });
-          JS
+      - name: Snapshot 166-544-332 via PhantomJsCloud
+        env:
+          PHANTOM_KEY: ${{ secrets.PHANTOM_KEY }}
+        run: |
+          JSON='{
+            "url":"https://our.riverty.com/se/166-544-332",
+            "renderType":"png",
+            "outputAsJson":false,
+            "requestSettings":{"waitInterval":5000},
+            "renderSettings":{
+              "viewport":{"width":1920,"height":1080},
+              "clipRectangle":{"top":0,"left":0,"width":1920,"height":1080},
+              "zoomFactor":1
+            }
+          }'
+          REQ=$(printf '%s' "$JSON" | base64 -w0)
+          URL="https://phantomjscloud.com/api/browser/v2/${PHANTOM_KEY}/?requestBase64=${REQ}"
+          curl -fsSL "$URL" -o public/166-544-332/image.png
+          file public/166-544-332/image.png | grep -qi 'PNG image' || { echo "No PNG received"; exit 1; }
+          cat > public/166-544-332/index.html <<'HTML'
+          <!doctype html><html lang="de"><head>
+          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Riverty 166-544-332</title>
+          <meta http-equiv="refresh" content="1800">
+          <style>html,body{height:100%;margin:0;background:#000}img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
+          </head><body><img src="image.png" alt="Riverty 166-544-332"></body></html>
+          HTML
 
-          node script.js
+      - name: Index page
+        run: |
+          cat > public/index.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Riverty Snapshots</title>
+          <style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee}
+          a{color:#7bd}ul{line-height:1.8}</style>
+          <h1>Riverty Snapshots</h1>
+          <ul>
+            <li><a href="./470-842-351/">470-842-351</a></li>
+            <li><a href="./166-544-332/">166-544-332</a></li>
+          </ul>
+          HTML
 
       - name: Upload static artifact
         uses: actions/upload-pages-artifact@v3
