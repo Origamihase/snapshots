@@ -50,20 +50,54 @@ jobs:
             const imgPath  = path.join(outDir, 'image.png');
             const htmlPath = path.join(outDir, 'index.html');
 
-            const browser = await chromium.launch({ args: ['--disable-gpu'] });
+            const browser = await chromium.launch({
+              args: [
+                '--disable-gpu',
+                '--no-sandbox',
+                '--disable-blink-features=AutomationControlled'
+              ],
+              headless: true
+            });
+
             const ctx = await browser.newContext({
               viewport: { width: 1920, height: 1080 },
               deviceScaleFactor: 1,
+              userAgent:
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+              locale: 'en-US',
+              colorScheme: 'light'
             });
+
+            // „webdriver“ verbergen (einige Seiten blenden Headless-Inhalte aus)
+            await ctx.addInitScript(() => {
+              Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            });
+
             const page = await ctx.newPage();
 
+            // Laden + ruhiges Netz
             await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
-            await page.waitForTimeout(5000);
+
+            // Auf sichtbaren Next.js-Content warten (nicht nur #__next existiert, sondern gefüllt)
+            await page.waitForSelector('#__next', { state: 'attached', timeout: 30000 });
+            await page.waitForFunction(() => {
+              const el = document.querySelector('#__next');
+              return el && el.innerText && el.innerText.trim().length > 0;
+            }, { timeout: 30000 });
+
+            // Warten bis Bilder wirklich da sind
+            await page.waitForFunction(() =>
+              Array.from(document.images).some(img => img.complete && img.naturalWidth > 0),
+              { timeout: 30000 }
+            );
+
+            // kurzes Puffer-Wait für Layout/Fonts
+            await page.waitForTimeout(1500);
 
             await page.screenshot({
               path: imgPath,
               clip: { x: 0, y: 0, width: 1920, height: 1080 },
-              type: 'png',
+              type: 'png'
             });
 
             await browser.close();
@@ -88,8 +122,7 @@ jobs:
             await snap('166-544-332', 'https://our.riverty.com/se/166-544-332');
 
             fs.writeFileSync('public/.nojekyll', '');
-            fs.writeFileSync(
-              'public/index.html',
+            fs.writeFileSync('public/index.html',
               '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+
               '<title>Riverty Snapshots</title>'+
               '<style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee}a{color:#7bd}ul{line-height:1.8}</style>'+
@@ -100,7 +133,7 @@ jobs:
           JS
 
           node script.js
-
+          
       - name: Upload static artifact
         uses: actions/upload-pages-artifact@v3
         with:
