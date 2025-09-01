@@ -17,77 +17,94 @@ concurrency:
 jobs:
   snap-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
+
+    env:
+      URL_470: "https://phantomjscloud.com/api/browser/v2/ak-vk3pd-7m0av-nbdmz-ybd6x-v37kj/?requestBase64=eyJ1cmwiOiJodHRwczovL291ci5yaXZlcnR5LmNvbS9zZS80NzAtODQyLTM1MSIsInJlbmRlclR5cGUiOiJwbmciLCJvdXRwdXRBc0pzb24iOmZhbHNlLCJyZXF1ZXN0U2V0dGluZ3MiOnsid2FpdEludGVydmFsIjo1MDAwfSwicmVuZGVyU2V0dGluZ3MiOnsidmlld3BvcnQiOnsid2lkdGgiOjE5MjAsImhlaWdodCI6MTA4MH0sImNsaXBSZWN0YW5nbGUiOnsidG9wIjowLCJsZWZ0IjowLCJ3aWR0aCI6MTkyMCwiaGVpZ2h0IjoxMDgwfSwiem9vbUZhY3RvciI6MX19"
+      URL_166: "https://phantomjscloud.com/api/browser/v2/ak-vc67v-06nxp-vqp2q-hjynv-p9w5d/?requestBase64=eyJ1cmwiOiJodHRwczovL291ci5yaXZlcnR5LmNvbS9zZS8xNjYtNTQ0LTMzMiIsInJlbmRlclR5cGUiOiJwbmciLCJvdXRwdXRBc0pzb24iOmZhbHNlLCJyZXF1ZXN0U2V0dGluZ3MiOnsid2FpdEludGVydmFsIjo1MDAwfSwicmVuZGVyU2V0dGluZ3MiOnsidmlld3BvcnQiOnsid2lkdGgiOjE5MjAsImhlaWdodCI6MTA4MH0sImNsaXBSZWN0YW5nbGUiOnsidG9wIjowLCJsZWZ0IjowLCJ3aWR0aCI6MTkyMCwiaGVpZ2h0IjoxMDgwfSwiem9vbUZhY3RvciI6MX19"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare output
+      - name: Prepare output and env
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p public/470-842-351 public/166-544-332
           printf '' > public/.nojekyll
+          echo "TS=$(date -u +%Y%m%d%H%M%S)" >> $GITHUB_ENV
+          OWNER="${{ github.repository_owner }}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          echo "BASE_URL=https://${OWNER}.github.io/${REPO}" >> $GITHUB_ENV
 
-      - name: Snapshot 470-842-351 via PhantomJsCloud
-        env:
-          PHANTOM_KEY: ${{ secrets.PHANTOM_KEY }}
+      - name: Function (bash) to safe-refresh one page
+        id: funcs
+        shell: bash
         run: |
-          JSON='{
-            "url":"https://our.riverty.com/se/470-842-351",
-            "renderType":"png",
-            "outputAsJson":false,
-            "requestSettings":{"waitInterval":5000},
-            "renderSettings":{
-              "viewport":{"width":1920,"height":1080},
-              "clipRectangle":{"top":0,"left":0,"width":1920,"height":1080},
-              "zoomFactor":1
-            }
-          }'
-          REQ=$(printf '%s' "$JSON" | base64 -w0)
-          URL="https://phantomjscloud.com/api/browser/v2/${PHANTOM_KEY}/?requestBase64=${REQ}"
-          curl -fsSL "$URL" -o public/470-842-351/image.png
-          # Fallback: wenn keine PNG kam, Fehler ausgeben
-          file public/470-842-351/image.png | grep -qi 'PNG image' || { echo "No PNG received"; exit 1; }
-          cat > public/470-842-351/index.html <<'HTML'
+          cat > safe_refresh.sh <<'SH'
+          #!/usr/bin/env bash
+          # usage: safe_refresh <id> <remote-url> <base-url>
+          set -euo pipefail
+          ID="$1"; REMOTE="$2"; BASE="$3"
+          OUTDIR="public/${ID}"
+          IMG="${OUTDIR}/image.png"
+          TMP="${OUTDIR}/.new.png"
+
+          mkdir -p "${OUTDIR}"
+
+          # 1) Bestehendes Bild von GitHub Pages ziehen (falls vorhanden)
+          curl -fsSL "${BASE}/${ID}/image.png" -o "${IMG}" || true
+
+          # 2) Neues Bild laden -> TMP (kann bei Limit/Fehler fehlschlagen)
+          if curl -fsSL --retry 2 --retry-delay 2 "${REMOTE}" -o "${TMP}"; then
+            if file "${TMP}" | grep -qi 'PNG image'; then
+              mv -f "${TMP}" "${IMG}"
+              echo "INFO: ${ID} aktualisiert."
+            else
+              echo "WARN: ${ID} keine PNG-Antwort (Limit/Fehler). Behalte letztes Bild."
+              rm -f "${TMP}"
+            fi
+          else
+            echo "WARN: ${ID} Abruf fehlgeschlagen. Behalte letztes Bild."
+            rm -f "${TMP}" 2>/dev/null || true
+          fi
+
+          # 3) Falls immer noch kein Bild existiert (z. B. erster Lauf + Fehler) -> Platzhalter (schwarz)
+          if [ ! -s "${IMG}" ]; then
+            echo "INFO: ${ID} legt Platzhalter an."
+            # 1x1 schwarzes PNG (Base64)
+            BASE64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9b5/2moAAAAASUVORK5CYII="
+            echo "${BASE64}" | base64 -d > "${IMG}"
+          fi
+
+          # 4) HTML schreiben (mit Cache-Buster)
+          cat > "${OUTDIR}/index.html" <<HTML
           <!doctype html><html lang="de"><head>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Riverty 470-842-351</title>
+          <title>Riverty ${ID}</title>
           <meta http-equiv="refresh" content="1800">
-          <style>html,body{height:100%;margin:0;background:#000}img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
-          </head><body><img src="image.png" alt="Riverty 470-842-351"></body></html>
+          <style>html,body{height:100%;margin:0;background:#000}
+          img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
+          </head><body>
+          <img src="image.png?v=${TS}" alt="Riverty ${ID}">
+          </body></html>
           HTML
+          SH
+          chmod +x safe_refresh.sh
 
-      - name: Snapshot 166-544-332 via PhantomJsCloud
-        env:
-          PHANTOM_KEY: ${{ secrets.PHANTOM_KEY }}
-        run: |
-          JSON='{
-            "url":"https://our.riverty.com/se/166-544-332",
-            "renderType":"png",
-            "outputAsJson":false,
-            "requestSettings":{"waitInterval":5000},
-            "renderSettings":{
-              "viewport":{"width":1920,"height":1080},
-              "clipRectangle":{"top":0,"left":0,"width":1920,"height":1080},
-              "zoomFactor":1
-            }
-          }'
-          REQ=$(printf '%s' "$JSON" | base64 -w0)
-          URL="https://phantomjscloud.com/api/browser/v2/${PHANTOM_KEY}/?requestBase64=${REQ}"
-          curl -fsSL "$URL" -o public/166-544-332/image.png
-          file public/166-544-332/image.png | grep -qi 'PNG image' || { echo "No PNG received"; exit 1; }
-          cat > public/166-544-332/index.html <<'HTML'
-          <!doctype html><html lang="de"><head>
-          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Riverty 166-544-332</title>
-          <meta http-equiv="refresh" content="1800">
-          <style>html,body{height:100%;margin:0;background:#000}img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
-          </head><body><img src="image.png" alt="Riverty 166-544-332"></body></html>
-          HTML
+      - name: Update 470-842-351 (safe)
+        shell: bash
+        run: ./safe_refresh.sh "470-842-351" "$URL_470" "$BASE_URL"
 
-      - name: Index page
+      - name: Update 166-544-332 (safe)
+        shell: bash
+        run: ./safe_refresh.sh "166-544-332" "$URL_166" "$BASE_URL"
+
+      - name: Build index page
+        shell: bash
         run: |
-          cat > public/index.html <<'HTML'
+          cat > public/index.html <<HTML
           <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
           <title>Riverty Snapshots</title>
           <style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee}
