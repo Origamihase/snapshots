@@ -17,7 +17,7 @@ concurrency:
 jobs:
   snap-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -51,57 +51,65 @@ jobs:
             const htmlPath = path.join(outDir, 'index.html');
 
             const browser = await chromium.launch({
+              headless: true,
               args: [
-                '--disable-gpu',
                 '--no-sandbox',
-                '--disable-blink-features=AutomationControlled'
-              ],
-              headless: true
+                '--disable-gpu',
+                '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled',
+                '--hide-scrollbars'
+              ]
             });
 
             const ctx = await browser.newContext({
               viewport: { width: 1920, height: 1080 },
               deviceScaleFactor: 1,
-              userAgent:
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
               locale: 'en-US',
-              colorScheme: 'light'
+              colorScheme: 'light',
+              javaScriptEnabled: true
             });
 
-            // „webdriver“ verbergen (einige Seiten blenden Headless-Inhalte aus)
+            // Headless-Detection minimieren
             await ctx.addInitScript(() => {
               Object.defineProperty(navigator, 'webdriver', { get: () => false });
             });
 
             const page = await ctx.newPage();
 
-            // Laden + ruhiges Netz
-            await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+            // 1) Seite laden, bis Netz weitgehend ruhig ist
+            await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
 
-            // Auf sichtbaren Next.js-Content warten (nicht nur #__next existiert, sondern gefüllt)
+            // 2) Auf Next-Container warten & Inhalt > 0
             await page.waitForSelector('#__next', { state: 'attached', timeout: 30000 });
             await page.waitForFunction(() => {
               const el = document.querySelector('#__next');
               return el && el.innerText && el.innerText.trim().length > 0;
             }, { timeout: 30000 });
 
-            // Warten bis Bilder wirklich da sind
-            await page.waitForFunction(() =>
-              Array.from(document.images).some(img => img.complete && img.naturalWidth > 0),
-              { timeout: 30000 }
-            );
+            // 3) Mind. ein sichtbares Bild im Viewport geladen
+            await page.waitForFunction(() => {
+              const vp = { w: window.innerWidth, h: window.innerHeight };
+              return Array.from(document.images).some(img => {
+                if (!img.complete || img.naturalWidth === 0) return false;
+                const r = img.getBoundingClientRect();
+                return r.bottom > 0 && r.right > 0 && r.left < vp.w && r.top < vp.h;
+              });
+            }, { timeout: 30000 });
 
-            // kurzes Puffer-Wait für Layout/Fonts
-            await page.waitForTimeout(1500);
+            // 4) Kurzer Puffer für Layout/Fonts
+            await page.waitForTimeout(2000);
 
+            // Screenshot (genau 1920x1080)
             await page.screenshot({
               path: imgPath,
-              clip: { x: 0, y: 0, width: 1920, height: 1080 },
-              type: 'png'
+              type: 'png',
+              clip: { x: 0, y: 0, width: 1920, height: 1080 }
             });
 
             await browser.close();
 
+            // Statische HTML-Seite ohne JS
             const html = `<!doctype html>
           <html lang="de"><head>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -121,6 +129,7 @@ jobs:
             await snap('470-842-351', 'https://our.riverty.com/se/470-842-351');
             await snap('166-544-332', 'https://our.riverty.com/se/166-544-332');
 
+            // Index & .nojekyll
             fs.writeFileSync('public/.nojekyll', '');
             fs.writeFileSync('public/index.html',
               '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+
@@ -133,7 +142,7 @@ jobs:
           JS
 
           node script.js
-          
+
       - name: Upload static artifact
         uses: actions/upload-pages-artifact@v3
         with:
