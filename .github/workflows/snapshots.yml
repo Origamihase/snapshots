@@ -1,0 +1,108 @@
+name: riverty-snapshots
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # alle 15 Minuten
+  workflow_dispatch:         # manueller Start möglich
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  snap-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright (Chromium)
+        run: |
+          npm init -y
+          npm i -D playwright
+          npx playwright install --with-deps chromium
+
+      - name: Render snapshots (1920x1080 PNG) & build static pages
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const { chromium } = require('playwright');
+
+          async function snap(id, url) {
+            const outDir = path.join('public', id);
+            fs.mkdirSync(outDir, { recursive: true });
+            const imgPath  = path.join(outDir, 'image.png');
+            const htmlPath = path.join(outDir, 'index.html');
+
+            const browser = await chromium.launch({ args: ['--disable-gpu'] });
+            const ctx = await browser.newContext({
+              viewport: { width: 1920, height: 1080 },
+              deviceScaleFactor: 1
+            });
+            const page = await ctx.newPage();
+
+            // Seite laden, bis Netzaktivität weitgehend ruhig ist; danach noch 5s warten
+            await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+            await page.waitForTimeout(5000);
+
+            await page.screenshot({
+              path: imgPath,
+              clip: { x: 0, y: 0, width: 1920, height: 1080 },
+              type: 'png'
+            });
+
+            await browser.close();
+
+            const html = `<!doctype html>
+<html lang="de"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Riverty ${id}</title>
+<meta http-equiv="refresh" content="900"> <!-- Seite alle 15 Min neu laden -->
+<style>
+  html,body{height:100%;margin:0;background:#000}
+  img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+</style>
+</head><body>
+<img src="image.png" alt="Riverty ${id}">
+</body></html>`;
+            fs.writeFileSync(htmlPath, html);
+          }
+
+          (async () => {
+            // Ziel-URLs
+            await snap('470-842-351', 'https://our.riverty.com/se/470-842-351');
+            await snap('166-544-332', 'https://our.riverty.com/se/166-544-332');
+
+            // Übersichtsseite + .nojekyll
+            fs.mkdirSync('public', { recursive: true });
+            fs.writeFileSync('public/.nojekyll', '');
+            fs.writeFileSync('public/index.html',
+              '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+
+              '<title>Riverty Snapshots</title>'+
+              '<style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee}a{color:#7bd}ul{line-height:1.8}</style>'+
+              '<h1>Riverty Snapshots</h1>'+
+              '<ul><li><a href="./470-842-351/">470-842-351</a></li><li><a href="./166-544-332/">166-544-332</a></li></ul>'
+            );
+          })().catch(e => { console.error(e); process.exit(1); });
+          NODE
+
+      - name: Upload static artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
