@@ -2,7 +2,7 @@ name: riverty-snapshots
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # alle 30 Minuten (anpassbar)
+    - cron: '*/30 * * * *'   # alle 30 Minuten
   workflow_dispatch:
 
 permissions:
@@ -35,105 +35,73 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Render snapshots (1920x1080 PNG) & build static pages
-        shell: bash
         run: |
-          set -euo pipefail
           mkdir -p public
           cat > script.js <<'JS'
           const fs = require('fs');
           const path = require('path');
           const { chromium } = require('playwright');
 
-          async function ensureImagesLoaded(page) {
-            // 1) Lazy-Loading & async decoding deaktivieren (Next/Image & natives lazy)
-            await page.evaluate(() => {
-              for (const img of document.querySelectorAll('img')) {
-                img.setAttribute('loading', 'eager');
-                img.setAttribute('decoding', 'sync');
-              }
-            });
-            // 2) Scroll-Nudges, damit IntersectionObserver feuert
-            await page.evaluate(() => window.scrollTo(0, 1));
-            await page.waitForTimeout(250);
-            await page.evaluate(() => window.scrollTo(0, 0));
-            // 3) Warten bis mind. EIN Bild komplett geladen ist
-            await page.waitForFunction(() =>
-              Array.from(document.images).some(img => img.complete && img.naturalWidth > 0),
-              { timeout: 30000 }
-            );
-          }
-
-          async function waitForPaint(page) {
-            // #__next existiert und hat Text-/DOM-Inhalt
-            await page.waitForSelector('#__next', { state: 'attached', timeout: 30000 });
-            await page.waitForFunction(() => {
-              const n = document.querySelector('#__next');
-              return n && n.innerText && n.innerText.trim().length > 0;
-            }, { timeout: 30000 });
-          }
-
-          async function snapOnce(id, url, attempt) {
+          async function snap(id, url) {
             const outDir = path.join('public', id);
             fs.mkdirSync(outDir, { recursive: true });
             const imgPath   = path.join(outDir, 'image.png');
             const htmlPath  = path.join(outDir, 'index.html');
-            const debugPath = path.join(outDir, `debug-attempt${attempt}.html`);
+            const debugPath = path.join(outDir, 'debug.html');
 
-            const browser = await chromium.launch({
-              headless: true,
-              args: [
-                '--no-sandbox',
-                '--disable-gpu',
-                '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled',
-                '--hide-scrollbars'
-              ]
-            });
-
+            const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
             const ctx = await browser.newContext({
-              viewport: { width: 1920, height: 1080 },
-              deviceScaleFactor: 1,
-              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-              locale: 'en-US',
-              colorScheme: 'light',
-              javaScriptEnabled: true
+              viewport: { width: 1920, height: 1080 }
             });
-
-            await ctx.addInitScript(() => {
-              Object.defineProperty(navigator, 'webdriver', { get: () => false });
-            });
-
             const page = await ctx.newPage();
 
-            await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
 
-            await waitForPaint(page);
-            await ensureImagesLoaded(page);
+            // Warte auf Überschrift im Content
+            await page.waitForSelector('#__next h1, #__next h2', { state: 'visible', timeout: 60000 });
 
-            // Zusätzlicher Puffer für Fonts/Layout
-            await page.waitForTimeout(2500);
+            // Warten bis ein Bild geladen ist
+            await page.waitForFunction(() =>
+              Array.from(document.images).some(img => img.complete && img.naturalWidth > 0),
+              { timeout: 60000 }
+            );
 
-            // Debug-HTML speichern (hilft bei Analyse)
+            // Debug speichern (HTML-Quelle nach Render)
             fs.writeFileSync(debugPath, await page.content(), 'utf8');
 
-            await page.screenshot({
-              path: imgPath,
-              type: 'png',
-              clip: { x: 0, y: 0, width: 1920, height: 1080 }
-            });
+            await page.screenshot({ path: imgPath, type: 'png', fullPage: false });
 
             await browser.close();
 
-            // Statische HTML-Seite ohne JS
             const html = `<!doctype html>
           <html lang="de"><head>
-          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <meta charset="utf-8">
+          <meta http-equiv="refresh" content="1800">
           <title>Riverty ${id}</title>
-          <meta http-equiv="refresh" content="1800"> <!-- alle 30 Min neu laden -->
           <style>
-            html,body{height:100%;margin:0;background:#000}
-            img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+            html,body{margin:0;height:100%;background:#000}
+            img{width:100%;height:100%;object-fit:contain}
           </style>
           </head><body>
           <img src="image.png" alt="Riverty ${id}">
-          </body>
+          </body></html>`;
+            fs.writeFileSync(htmlPath, html);
+          }
+
+          (async () => {
+            await snap('470-842-351', 'https://our.riverty.com/se/470-842-351');
+            await snap('166-544-332', 'https://our.riverty.com/se/166-544-332');
+            fs.writeFileSync('public/.nojekyll', '');
+            fs.writeFileSync('public/index.html', '<h1>Riverty Snapshots</h1><ul><li><a href="./470-842-351/">470-842-351</a></li><li><a href="./166-544-332/">166-544-332</a></li></ul>');
+          })().catch(e => { console.error(e); process.exit(1); });
+          JS
+
+          node script.js
+
+      - name: Upload static artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
