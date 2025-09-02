@@ -1,0 +1,96 @@
+name: Repo Keepalive (weekly)
+
+on:
+  schedule:
+    # 1× pro Woche, So 03:00 UTC (Europa/Wien i. d. R. 04:00/05:00)
+    - cron: "0 3 * * 0"
+  workflow_dispatch: {}
+
+# Principle of Least Privilege – alles Überflüssige strikt deaktiviert
+permissions:
+  issues: write
+  contents: none
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Variablen
+        id: vars
+        run: |
+          echo "date=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
+          echo "repo=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+
+      - name: Hilfsfunktionen laden (Retry mit Exponential-Backoff)
+        id: util
+        run: |
+          set -euo pipefail
+          cat > /tmp/retry.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          # retry <max_versuche> <cmd...>
+          retry() {
+            local max="$1"; shift
+            local n=1 delay=2
+            until "$@"; do
+              if (( n >= max )); then
+                echo "❌ Befehl endgültig fehlgeschlagen nach ${n} Versuchen." >&2
+                return 1
+              fi
+              echo "⚠️  Versuch ${n}/${max} fehlgeschlagen – warte ${delay}s und versuche erneut..." >&2
+              sleep "${delay}"
+              n=$((n+1))
+              delay=$((delay*2))
+            done
+          }
+          export -f retry
+          EOF
+          chmod +x /tmp/retry.sh
+
+      - name: Label 'automation' sicherstellen
+        run: |
+          set -euo pipefail
+          source /tmp/retry.sh
+          # gh label create ist idempotent mit --force
+          retry 3 gh label create automation \
+            --repo "${{ steps.vars.outputs.repo }}" \
+            --description "Automationsbezogene Vorgänge" \
+            --force
+
+      - name: Finde oder erstelle 'keepalive'-Issue (gh CLI)
+        id: issue
+        run: |
+          set -euo pipefail
+          source /tmp/retry.sh
+
+          issue_number="$(retry 3 gh issue list \
+            --repo "${{ steps.vars.outputs.repo }}" \
+            --search 'keepalive in:title is:open' \
+            --json number -q '.[0].number // ""')"
+
+          if [ -z "$issue_number" ]; then
+            issue_number="$(retry 3 gh issue create \
+              --repo "${{ steps.vars.outputs.repo }}" \
+              --title 'keepalive' \
+              --body 'Automatisch erstellt, um Repository-Aktivität sicherzustellen.' \
+              --label 'automation' \
+              --json number -q '.number')"
+          fi
+
+          echo "issue_number=$issue_number" >> "$GITHUB_OUTPUT"
+
+      - name: Hinterlasse Keepalive-Kommentar
+        run: |
+          set -euo pipefail
+          source /tmp/retry.sh
+          body="✅ Keepalive-Ping: ${{ steps.vars.outputs.date }}\n(run: ${GITHUB_RUN_ID})"
+          retry 3 gh issue comment "${{ steps.issue.outputs.issue_number }}" \
+            --repo "${{ steps.vars.outputs.repo }}" \
+            --body "$body"
