@@ -2,8 +2,7 @@ name: Repo Keepalive (weekly)
 
 on:
   schedule:
-    # 1× pro Woche, So 03:00 UTC (Europa/Wien meist 04:00/05:00)
-    - cron: "0 3 * * 0"
+    - cron: "0 3 * * 0"   # 1× pro Woche, So 03:00 UTC
   workflow_dispatch: {}
 
 permissions:
@@ -19,8 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # Die gh CLI authentifiziert sich automatisch über GH_TOKEN
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}    # gh CLI nutzt dieses Token automatisch
     steps:
       - name: Vars
         id: vars
@@ -47,28 +45,28 @@ jobs:
           EOF
           chmod +x /usr/local/bin/retry
 
-      - name: Find or create 'keepalive' issue
+      - name: Find or create issue via REST (gh api)
         id: issue
         run: |
           set -euo pipefail
 
-          # offene Issue mit Titel 'keepalive' suchen
-          issue_number="$(retry 3 gh issue list \
-            --repo "$GITHUB_REPOSITORY" \
-            --search 'keepalive in:title is:open' \
-            --json number -q '.[0].number // ""')"
+          # 1) List open issues and find one with exact title "keepalive" (exclude PRs)
+          existing_json="$(retry 3 gh api \
+            -H 'Accept: application/vnd.github+json' \
+            --paginate \
+            /repos/$GITHUB_REPOSITORY/issues \
+            -f state=open -f per_page=100)"
+          issue_number="$(echo "$existing_json" | jq -r '[.[] | select(.pull_request|not) | select(.title=="keepalive")] | .[0].number // empty')"
 
+          # 2) Create if missing and capture number directly from JSON
           if [ -z "$issue_number" ]; then
-            # erstellen (ohne --json) und danach erneut abfragen
-            retry 3 gh issue create \
-              --repo "$GITHUB_REPOSITORY" \
-              --title 'keepalive' \
-              --body 'Automatisch erstellt, um Repository-Aktivität sicherzustellen.'
-
-            issue_number="$(retry 3 gh issue list \
-              --repo "$GITHUB_REPOSITORY" \
-              --search 'keepalive in:title is:open' \
-              --json number -q '.[0].number // ""')"
+            create_json="$(retry 3 gh api \
+              -H 'Accept: application/vnd.github+json' \
+              -X POST \
+              /repos/$GITHUB_REPOSITORY/issues \
+              -f title='keepalive' \
+              -f body='Automatisch erstellt, um Repository-Aktivitaet sicherzustellen.')"
+            issue_number="$(echo "$create_json" | jq -r '.number // empty')"
           fi
 
           if [ -z "$issue_number" ]; then
@@ -79,9 +77,4 @@ jobs:
           echo "issue_number=$issue_number" >> "$GITHUB_OUTPUT"
 
       - name: Post keepalive comment
-        run: |
-          set -euo pipefail
-          body="Keepalive-Ping: ${{ steps.vars.outputs.date }} (run: ${GITHUB_RUN_ID})"
-          retry 3 gh issue comment "${{ steps.issue.outputs.issue_number }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --body "$body"
+        r
