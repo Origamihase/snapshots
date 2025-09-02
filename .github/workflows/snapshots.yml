@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 10
 
     env:
+      # PhantomJsCloud-Links (PNG, 1920x1080)
       URL_470: "https://phantomjscloud.com/api/browser/v2/ak-vk3pd-7m0av-nbdmz-ybd6x-v37kj/?requestBase64=eyJ1cmwiOiJodHRwczovL291ci5yaXZlcnR5LmNvbS9zZS80NzAtODQyLTM1MSIsInJlbmRlclR5cGUiOiJwbmciLCJvdXRwdXRBc0pzb24iOmZhbHNlLCJyZXF1ZXN0U2V0dGluZ3MiOnsid2FpdEludGVydmFsIjo1MDAwfSwicmVuZGVyU2V0dGluZ3MiOnsidmlld3BvcnQiOnsid2lkdGgiOjE5MjAsImhlaWdodCI6MTA4MH0sImNsaXBSZWN0YW5nbGUiOnsidG9wIjowLCJsZWZ0IjowLCJ3aWR0aCI6MTkyMCwiaGVpZ2h0IjoxMDgwfSwiem9vbUZhY3RvciI6MX19"
       URL_166: "https://phantomjscloud.com/api/browser/v2/ak-vc67v-06nxp-vqp2q-hjynv-p9w5d/?requestBase64=eyJ1cmwiOiJodHRwczovL291ci5yaXZlcnR5LmNvbS9zZS8xNjYtNTQ0LTMzMiIsInJlbmRlclR5cGUiOiJwbmciLCJvdXRwdXRBc0pzb24iOmZhbHNlLCJyZXF1ZXN0U2V0dGluZ3MiOnsid2FpdEludGVydmFsIjo1MDAwfSwicmVuZGVyU2V0dGluZ3MiOnsidmlld3BvcnQiOnsid2lkdGgiOjE5MjAsImhlaWdodCI6MTA4MH0sImNsaXBSZWN0YW5nbGUiOnsidG9wIjowLCJsZWZ0IjowLCJ3aWR0aCI6MTkyMCwiaGVpZ2h0IjoxMDgwfSwiem9vbUZhY3RvciI6MX19"
 
@@ -27,7 +28,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare output & env (lowercase BASE_URL fix)
+      - name: Prepare output & env (lowercase BASE_URL)
         shell: bash
         run: |
           set -euo pipefail
@@ -54,8 +55,11 @@ jobs:
           HDR="${OUTDIR}/.headers.txt"
 
           mkdir -p "${OUTDIR}"
+
+          # 1) Vorheriges Live-Bild als Fallback lokal puffern
           curl -fsSL "${BASE}/${ID}/image.png" -o "${IMG}" || true
 
+          # 2) Neues Bild abrufen (mit Retries) und validieren
           if curl -fSL --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 \
                -D "${HDR}" "${REMOTE}" -o "${TMP}"; then
             TYPE="$(file -b --mime-type "${TMP}" || true)"
@@ -72,12 +76,14 @@ jobs:
             rm -f "${TMP}" 2>/dev/null || true
           fi
 
+          # 3) Falls kein Bild vorhanden, Platzhalter anlegen
           if [ ! -s "${IMG}" ]; then
             echo "INFO[${ID}] Platzhalter anlegen."
             echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9b5/2moAAAAASUVORK5CYII=' \
             | base64 -d > "${IMG}"
           fi
 
+          # 4) Statische HTML-Seite (mit Cache-Buster im Query)
           cat > "${OUTDIR}/index.html" <<HTML
           <!doctype html><html lang="de"><head>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -112,15 +118,41 @@ jobs:
           <ul>
             <li><a href="./470-842-351/">470-842-351</a></li>
             <li><a href="./166-544-332/">166-544-332</a></li>
+            <li><a href="./health/">Health</a></li>
           </ul>
           HTML
 
-      - name: Write last-run marker
+      - name: Health page (no-cache)
         shell: bash
         run: |
-          mkdir -p public
-          date -u +'%Y-%m-%d %H:%M:%S UTC' > public/last-run.txt
-          TZ=Europe/Vienna date +'%Y-%m-%d %H:%M:%S %Z' >> public/last-run.txt
+          mkdir -p public/health
+          UTC="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          LOCAL="$(TZ=Europe/Vienna date +'%Y-%m-%d %H:%M:%S %Z')"
+          cat > public/health/index.html <<HTML
+          <!doctype html>
+          <html lang="de">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <title>Health</title>
+            <!-- No-Cache -->
+            <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+            <meta http-equiv="Pragma" content="no-cache">
+            <meta http-equiv="Expires" content="0">
+            <style>
+              body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px}
+              pre{background:#1b1b1b;padding:16px;border-radius:8px;overflow:auto}
+              a{color:#7bd}
+            </style>
+          </head>
+          <body>
+            <h1>Health</h1>
+            <pre>UTC   : ${UTC}
+Vienna: ${LOCAL}</pre>
+            <p><a href="../">Zurück</a></p>
+          </body>
+          </html>
+          HTML
 
       - name: Upload static artifact
         uses: actions/upload-pages-artifact@v3
