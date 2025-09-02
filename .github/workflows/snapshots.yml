@@ -2,7 +2,7 @@ name: riverty-snapshots
 
 on:
   schedule:
-    - cron: '*/30 * * * *'     # alle 30 Minuten
+    - cron: '3,33 * * * *'    # alle 30 Minuten (UTC, Minute 03 & 33)
   workflow_dispatch:
 
 permissions:
@@ -20,7 +20,6 @@ jobs:
     timeout-minutes: 10
 
     env:
-      # Deine geprüften PhantomJsCloud-Links (PNG, 1920x1080)
       URL_470: "https://phantomjscloud.com/api/browser/v2/ak-vk3pd-7m0av-nbdmz-ybd6x-v37kj/?requestBase64=eyJ1cmwiOiJodHRwczovL291ci5yaXZlcnR5LmNvbS9zZS80NzAtODQyLTM1MSIsInJlbmRlclR5cGUiOiJwbmciLCJvdXRwdXRBc0pzb24iOmZhbHNlLCJyZXF1ZXN0U2V0dGluZ3MiOnsid2FpdEludGVydmFsIjo1MDAwfSwicmVuZGVyU2V0dGluZ3MiOnsidmlld3BvcnQiOnsid2lkdGgiOjE5MjAsImhlaWdodCI6MTA4MH0sImNsaXBSZWN0YW5nbGUiOnsidG9wIjowLCJsZWZ0IjowLCJ3aWR0aCI6MTkyMCwiaGVpZ2h0IjoxMDgwfSwiem9vbUZhY3RvciI6MX19"
       URL_166: "https://phantomjscloud.com/api/browser/v2/ak-vc67v-06nxp-vqp2q-hjynv-p9w5d/?requestBase64=eyJ1cmwiOiJodHRwczovL291ci5yaXZlcnR5LmNvbS9zZS8xNjYtNTQ0LTMzMiIsInJlbmRlclR5cGUiOiJwbmciLCJvdXRwdXRBc0pzb24iOmZhbHNlLCJyZXF1ZXN0U2V0dGluZ3MiOnsid2FpdEludGVydmFsIjo1MDAwfSwicmVuZGVyU2V0dGluZ3MiOnsidmlld3BvcnQiOnsid2lkdGgiOjE5MjAsImhlaWdodCI6MTA4MH0sImNsaXBSZWN0YW5nbGUiOnsidG9wIjowLCJsZWZ0IjowLCJ3aWR0aCI6MTkyMCwiaGVpZ2h0IjoxMDgwfSwiem9vbUZhY3RvciI6MX19"
 
@@ -55,16 +54,12 @@ jobs:
           HDR="${OUTDIR}/.headers.txt"
 
           mkdir -p "${OUTDIR}"
-
-          # 1) Vorhandenes Live-Bild (falls bereits deployed) lokal puffern (Lowercase-BASE_URL sichert 200)
           curl -fsSL "${BASE}/${ID}/image.png" -o "${IMG}" || true
 
-          # 2) Neues Bild abrufen (sanfte Retries), Header speichern
           if curl -fSL --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 \
                -D "${HDR}" "${REMOTE}" -o "${TMP}"; then
             TYPE="$(file -b --mime-type "${TMP}" || true)"
             SIZE="$(stat -c%s "${TMP}" 2>/dev/null || echo 0)"
-            # Nur übernehmen, wenn klar PNG und plausibel groß (>= 20 KB)
             if [ "${TYPE}" = "image/png" ] && [ "${SIZE}" -ge 20000 ]; then
               mv -f "${TMP}" "${IMG}"
               echo "OK  [${ID}] PNG ${SIZE} bytes"
@@ -77,20 +72,17 @@ jobs:
             rm -f "${TMP}" 2>/dev/null || true
           fi
 
-          # 3) Falls (noch) kein Bild existiert: schwarzer 1x1 Platzhalter
           if [ ! -s "${IMG}" ]; then
             echo "INFO[${ID}] Platzhalter anlegen."
-            # 1x1 schwarzes PNG
             echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9b5/2moAAAAASUVORK5CYII=' \
             | base64 -d > "${IMG}"
           fi
 
-          # 4) HTML-Seite mit Cache-Buster
           cat > "${OUTDIR}/index.html" <<HTML
           <!doctype html><html lang="de"><head>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
           <title>Riverty ${ID}</title>
-          <meta http-equiv="refresh" content="1800"> <!-- alle 30 Min neu laden -->
+          <meta http-equiv="refresh" content="1800">
           <style>html,body{height:100%;margin:0;background:#000}
           img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
           </head><body>
@@ -122,6 +114,13 @@ jobs:
             <li><a href="./166-544-332/">166-544-332</a></li>
           </ul>
           HTML
+
+      - name: Write last-run marker
+        shell: bash
+        run: |
+          mkdir -p public
+          date -u +'%Y-%m-%d %H:%M:%S UTC' > public/last-run.txt
+          TZ=Europe/Vienna date +'%Y-%m-%d %H:%M:%S %Z' >> public/last-run.txt
 
       - name: Upload static artifact
         uses: actions/upload-pages-artifact@v3
