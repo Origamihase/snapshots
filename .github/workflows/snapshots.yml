@@ -2,7 +2,7 @@ name: riverty-snapshots
 
 on:
   schedule:
-    - cron: '3,33 * * * *'   # alle 30 Minuten (UTC: Minute 03 & 33)
+    - cron: '*/30 * * * *'   # alle 30 Minuten (UTC)
   workflow_dispatch:
 
 permissions:
