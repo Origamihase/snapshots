@@ -2,7 +2,7 @@ name: Repo Keepalive (weekly)
 
 on:
   schedule:
-    # 1× pro Woche, So 03:00 UTC (Europa/Wien i. d. R. 04:00/05:00)
+    # 1× pro Woche, So 03:00 UTC (Europa/Wien meist 04:00/05:00)
     - cron: "0 3 * * 0"
   workflow_dispatch: {}
 
@@ -19,15 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Die gh CLI authentifiziert sich automatisch über GH_TOKEN
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Authenticate gh
-        run: |
-          set -euo pipefail
-          echo "${GITHUB_TOKEN}" | gh auth login --with-token
-          gh auth status -h github.com
-
       - name: Vars
         id: vars
         run: |
@@ -58,20 +52,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          # try to find an open issue with title 'keepalive'
+          # offene Issue mit Titel 'keepalive' suchen
           issue_number="$(retry 3 gh issue list \
             --repo "$GITHUB_REPOSITORY" \
             --search 'keepalive in:title is:open' \
             --json number -q '.[0].number // ""')"
 
           if [ -z "$issue_number" ]; then
-            # create issue (no --json supported here)
+            # erstellen (ohne --json) und danach erneut abfragen
             retry 3 gh issue create \
               --repo "$GITHUB_REPOSITORY" \
               --title 'keepalive' \
               --body 'Automatisch erstellt, um Repository-Aktivität sicherzustellen.'
 
-            # fetch the number afterwards
             issue_number="$(retry 3 gh issue list \
               --repo "$GITHUB_REPOSITORY" \
               --search 'keepalive in:title is:open' \
