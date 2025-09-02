@@ -28,11 +28,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
       - name: Prepare output & env (lowercase BASE_URL)
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p public/470-842-351 public/166-544-332
+          mkdir -p public public/470-842-351 public/166-544-332
           printf '' > public/.nojekyll
           echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
 
@@ -153,6 +156,12 @@ Vienna: ${LOCAL}</pre>
           </body>
           </html>
           HTML
+
+      - name: List files that will be deployed
+        shell: bash
+        run: |
+          echo "=== public tree ==="
+          find public -maxdepth 2 -type f -print | sort
 
       - name: Upload static artifact
         uses: actions/upload-pages-artifact@v3
