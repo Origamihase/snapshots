@@ -2,9 +2,10 @@ name: Repo Keepalive (weekly)
 
 on:
   schedule:
-    - cron: "0 3 * * 0"   # 1× pro Woche, So 03:00 UTC
+    - cron: "0 3 * * 0"   # wöchentlich, So 03:00 UTC
   workflow_dispatch: {}
 
+# minimale Rechte
 permissions:
   issues: write
   contents: none
@@ -18,63 +19,59 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      GH_TOKEN: ${{ github.token }}    # gh CLI nutzt dieses Token automatisch
+      GH_TOKEN: ${{ github.token }}  # gh CLI nutzt dieses Token automatisch
     steps:
-      - name: Vars
-        id: vars
-        run: |
-          echo "date=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
-
-      - name: Install retry helper
-        run: |
-          set -euo pipefail
-          cat > /usr/local/bin/retry <<'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          max="$1"; shift
-          n=1; delay=2
-          until "$@"; do
-            if (( n >= max )); then
-              echo "Command failed after ${n} attempts." >&2
-              exit 1
-            fi
-            echo "Attempt ${n}/${max} failed. Retrying in ${delay}s..." >&2
-            sleep "$delay"
-            n=$((n+1)); delay=$((delay*2))
-          done
-          EOF
-          chmod +x /usr/local/bin/retry
-
-      - name: Find or create issue via REST (gh api)
-        id: issue
+      - name: Keepalive
+        shell: bash
         run: |
           set -euo pipefail
 
-          # 1) List open issues and find one with exact title "keepalive" (exclude PRs)
-          existing_json="$(retry 3 gh api \
+          DATE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+          retry() {
+            local max="$1"; shift
+            local n=1 delay=2
+            until "$@"; do
+              if [ "$n" -ge "$max" ]; then
+                echo "Command failed after ${n} attempts." >&2
+                return 1
+              fi
+              sleep "$delay"
+              n=$((n+1))
+              delay=$((delay*2))
+            done
+          }
+
+          # 1) Offene Issues holen und nach exakt 'keepalive' filtern (keine PRs)
+          ISSUE_NUMBER="$(retry 3 gh api \
             -H 'Accept: application/vnd.github+json' \
             --paginate \
             /repos/$GITHUB_REPOSITORY/issues \
-            -f state=open -f per_page=100)"
-          issue_number="$(echo "$existing_json" | jq -r '[.[] | select(.pull_request|not) | select(.title=="keepalive")] | .[0].number // empty')"
+            -f state=open -f per_page=100 \
+            --jq '.[] | select(.pull_request|not) | select(.title==\"keepalive\") | .number' \
+            | head -n1 || true)"
 
-          # 2) Create if missing and capture number directly from JSON
-          if [ -z "$issue_number" ]; then
-            create_json="$(retry 3 gh api \
+          # 2) Falls nicht vorhanden: erstellen und Nummer direkt aus JSON lesen
+          if [ -z "${ISSUE_NUMBER:-}" ]; then
+            ISSUE_NUMBER="$(retry 3 gh api \
               -H 'Accept: application/vnd.github+json' \
               -X POST \
               /repos/$GITHUB_REPOSITORY/issues \
               -f title='keepalive' \
-              -f body='Automatisch erstellt, um Repository-Aktivitaet sicherzustellen.')"
-            issue_number="$(echo "$create_json" | jq -r '.number // empty')"
+              -f body='Automatisch erstellt, um Repository-Aktivitaet sicherzustellen.' \
+              --jq '.number')"
           fi
 
-          if [ -z "$issue_number" ]; then
+          if [ -z "${ISSUE_NUMBER:-}" ]; then
             echo "Could not determine issue number." >&2
             exit 1
           fi
 
-          echo "issue_number=$issue_number" >> "$GITHUB_OUTPUT"
+          BODY="Keepalive-Ping: ${DATE} (run: ${GITHUB_RUN_ID})"
 
-      - name: Post keepalive comment
-        r
+          # 3) Kommentar posten
+          retry 3 gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -X POST \
+            /repos/$GITHUB_REPOSITORY/issues/${ISSUE_NUMBER}/comments \
+            -f body="$BODY"
