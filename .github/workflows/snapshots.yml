@@ -28,25 +28,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare output & env
+      - name: Prepare output & env (lowercase BASE_URL fix)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p public/470-842-351 public/166-544-332
           printf '' > public/.nojekyll
-          echo "TS=$(date -u +%Y%m%d%H%M%S)" >> $GITHUB_ENV
-          OWNER="${{ github.repository_owner }}"
-          REPO="${GITHUB_REPOSITORY#*/}"
-          echo "BASE_URL=https://${OWNER}.github.io/${REPO}" >> $GITHUB_ENV
+          echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
+
+          OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          REPO_RAW="${GITHUB_REPOSITORY#*/}"
+          REPO_LOWER="$(echo "${REPO_RAW}" | tr '[:upper:]' '[:lower:]')"
+          echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_LOWER}" >> "$GITHUB_ENV"
 
       - name: Helper (safe fetch & publish)
         shell: bash
         run: |
           cat > safe_fetch.sh <<'SH'
           #!/usr/bin/env bash
-          # usage: safe_fetch <id> <remote-url> <base-url>
+          # usage: safe_fetch <id> <remote-url> <base-url> <timestamp>
           set -euo pipefail
-          ID="$1"; REMOTE="$2"; BASE="$3"
+          ID="$1"; REMOTE="$2"; BASE="$3"; TS="$4"
           OUTDIR="public/${ID}"
           IMG="${OUTDIR}/image.png"
           TMP="${OUTDIR}/.new.png"
@@ -54,15 +56,15 @@ jobs:
 
           mkdir -p "${OUTDIR}"
 
-          # 1) Vorhandenes Live-Bild (falls schon veröffentlicht) lokal puffern
+          # 1) Vorhandenes Live-Bild (falls bereits deployed) lokal puffern (Lowercase-BASE_URL sichert 200)
           curl -fsSL "${BASE}/${ID}/image.png" -o "${IMG}" || true
 
-          # 2) Neues Bild anfordern (mit sanften Retries und Timeouts) -> TMP
+          # 2) Neues Bild abrufen (sanfte Retries), Header speichern
           if curl -fSL --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 \
                -D "${HDR}" "${REMOTE}" -o "${TMP}"; then
             TYPE="$(file -b --mime-type "${TMP}" || true)"
             SIZE="$(stat -c%s "${TMP}" 2>/dev/null || echo 0)"
-            # Nur übernehmen, wenn eindeutig PNG und plausibel groß (>= 20 KB)
+            # Nur übernehmen, wenn klar PNG und plausibel groß (>= 20 KB)
             if [ "${TYPE}" = "image/png" ] && [ "${SIZE}" -ge 20000 ]; then
               mv -f "${TMP}" "${IMG}"
               echo "OK  [${ID}] PNG ${SIZE} bytes"
@@ -75,7 +77,7 @@ jobs:
             rm -f "${TMP}" 2>/dev/null || true
           fi
 
-          # 3) Falls (noch) kein Bild vorhanden: schwarzer 1x1 Platzhalter
+          # 3) Falls (noch) kein Bild existiert: schwarzer 1x1 Platzhalter
           if [ ! -s "${IMG}" ]; then
             echo "INFO[${ID}] Platzhalter anlegen."
             # 1x1 schwarzes PNG
@@ -100,11 +102,11 @@ jobs:
 
       - name: Update 470-842-351 (safe)
         shell: bash
-        run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL"
+        run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL" "$TS"
 
       - name: Update 166-544-332 (safe)
         shell: bash
-        run: ./safe_fetch.sh "166-544-332" "$URL_166" "$BASE_URL"
+        run: ./safe_fetch.sh "166-544-332" "$URL_166" "$BASE_URL" "$TS"
 
       - name: Index page
         shell: bash
