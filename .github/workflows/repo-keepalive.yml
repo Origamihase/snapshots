@@ -5,7 +5,6 @@ on:
     - cron: "0 3 * * 0"   # wöchentlich, So 03:00 UTC
   workflow_dispatch: {}
 
-# minimale Rechte
 permissions:
   issues: write
   contents: none
@@ -42,24 +41,20 @@ jobs:
             done
           }
 
-          # 1) Offene Issues holen und nach exakt 'keepalive' filtern (keine PRs)
-          ISSUE_NUMBER="$(retry 3 gh api \
-            -H 'Accept: application/vnd.github+json' \
-            --paginate \
-            /repos/$GITHUB_REPOSITORY/issues \
-            -f state=open -f per_page=100 \
-            --jq '.[] | select(.pull_request|not) | select(.title==\"keepalive\") | .number' \
-            | head -n1 || true)"
+          # 1) Offene Issue mit Titel 'keepalive' suchen (JSON-Ausgabe, Nummer extrahieren)
+          ISSUE_NUMBER="$(retry 3 gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --search 'keepalive in:title is:open' \
+            --json number --jq '.[0].number // empty' || true)"
 
-          # 2) Falls nicht vorhanden: erstellen und Nummer direkt aus JSON lesen
+          # 2) Falls nicht vorhanden: erzeugen und Issue-Nummer aus ausgegebener URL extrahieren
           if [ -z "${ISSUE_NUMBER:-}" ]; then
-            ISSUE_NUMBER="$(retry 3 gh api \
-              -H 'Accept: application/vnd.github+json' \
-              -X POST \
-              /repos/$GITHUB_REPOSITORY/issues \
-              -f title='keepalive' \
-              -f body='Automatisch erstellt, um Repository-Aktivitaet sicherzustellen.' \
-              --jq '.number')"
+            CREATE_OUT="$(retry 3 gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "keepalive" \
+              --body "Automatisch erstellt, um Repository-Aktivitaet sicherzustellen.")"
+            # Erwartete Ausgabe: https://github.com/<owner>/<repo>/issues/<nr>
+            ISSUE_NUMBER="$(printf '%s\n' "$CREATE_OUT" | sed -E 's#.*/issues/([0-9]+).*#\1#')"
           fi
 
           if [ -z "${ISSUE_NUMBER:-}" ]; then
@@ -70,8 +65,6 @@ jobs:
           BODY="Keepalive-Ping: ${DATE} (run: ${GITHUB_RUN_ID})"
 
           # 3) Kommentar posten
-          retry 3 gh api \
-            -H 'Accept: application/vnd.github+json' \
-            -X POST \
-            /repos/$GITHUB_REPOSITORY/issues/${ISSUE_NUMBER}/comments \
-            -f body="$BODY"
+          retry 3 gh issue comment "$ISSUE_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body "$BODY"
