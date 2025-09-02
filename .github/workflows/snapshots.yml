@@ -18,6 +18,9 @@ jobs:
   cache-and-publish:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     env:
       URL_470: "https://phantomjscloud.com/api/browser/v2/ak-vk3pd-7m0av-nbdmz-ybd6x-v37kj/?requestBase64=eyJ1cmwiOiJodHRwczovL291ci5yaXZlcnR5LmNvbS9zZS80NzAtODQyLTM1MSIsInJlbmRlclR5cGUiOiJwbmciLCJvdXRwdXRBc0pzb24iOmZhbHNlLCJyZXF1ZXN0U2V0dGluZ3MiOnsid2FpdEludGVydmFsIjo1MDAwfSwicmVuZGVyU2V0dGluZ3MiOnsidmlld3BvcnQiOnsid2lkdGgiOjE5MjAsImhlaWdodCI6MTA4MH0sImNsaXBSZWN0YW5nbGUiOnsidG9wIjowLCJsZWZ0IjowLCJ3aWR0aCI6MTkyMCwiaGVpZ2h0IjoxMDgwfSwiem9vbUZhY3RvciI6MX19"
@@ -35,60 +38,44 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p public public/470-842-351 public/166-544-332
-          printf '' > public/.nojekyll
+          : > public/.nojekyll
           echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
           OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          REPO_RAW="${GITHUB_REPOSITORY#*/}"
-          REPO_LOWER="$(echo "${REPO_RAW}" | tr '[:upper:]' '[:lower:]')"
+          REPO_LOWER="$(echo "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
           echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_LOWER}" >> "$GITHUB_ENV"
 
       - name: Helper (safe fetch & publish)
         shell: bash
         run: |
-          cat > safe_fetch.sh <<'SH'
+          cat > safe_fetch.sh << 'SH'
           #!/usr/bin/env bash
-          # usage: safe_fetch <id> <remote-url> <base-url> <timestamp>
           set -euo pipefail
           ID="$1"; REMOTE="$2"; BASE="$3"; TS="$4"
           OUTDIR="public/${ID}"
           IMG="${OUTDIR}/image.png"
           TMP="${OUTDIR}/.new.png"
-          HDR="${OUTDIR}/.headers.txt"
-
           mkdir -p "${OUTDIR}"
-
-          # 1) Vorheriges Live-Bild als Fallback lokal puffern
           curl -fsSL "${BASE}/${ID}/image.png" -o "${IMG}" || true
-
-          # 2) Neues Bild abrufen (mit Retries) und validieren
-          if curl -fSL --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 -D "${HDR}" "${REMOTE}" -o "${TMP}"; then
+          if curl -fSL --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 "${REMOTE}" -o "${TMP}"; then
             TYPE="$(file -b --mime-type "${TMP}" || true)"
             SIZE="$(stat -c%s "${TMP}" 2>/dev/null || echo 0)"
             if [ "${TYPE}" = "image/png" ] && [ "${SIZE}" -ge 20000 ]; then
               mv -f "${TMP}" "${IMG}"
-              echo "OK  [${ID}] PNG ${SIZE} bytes"
             else
-              echo "WARN[${ID}] Ungültige Antwort (type=${TYPE} size=${SIZE}); behalte altes Bild."
               rm -f "${TMP}"
             fi
           else
-            echo "WARN[${ID}] Abruf fehlgeschlagen; behalte altes Bild."
             rm -f "${TMP}" 2>/dev/null || true
           fi
-
-          # 3) Falls kein Bild vorhanden: Platzhalter
           if [ ! -s "${IMG}" ]; then
             echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9b5/2moAAAAASUVORK5CYII=' | base64 -d > "${IMG}"
           fi
-
-          # 4) Statische HTML-Seite (mit Cache-Buster)
           cat > "${OUTDIR}/index.html" <<HTML
           <!doctype html><html lang="de"><head>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
           <title>Riverty ${ID}</title>
           <meta http-equiv="refresh" content="1800">
-          <style>html,body{height:100%;margin:0;background:#000}
-          img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
+          <style>html,body{height:100%;margin:0;background:#000} img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
           </head><body>
           <img src="image.png?v=${TS}" alt="Riverty ${ID}">
           </body></html>
@@ -96,22 +83,21 @@ jobs:
           SH
           chmod +x safe_fetch.sh
 
-      - name: Update 470-842-351 (safe)
+      - name: Update 470-842-351
         shell: bash
         run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL" "$TS"
 
-      - name: Update 166-544-332 (safe)
+      - name: Update 166-544-332
         shell: bash
         run: ./safe_fetch.sh "166-544-332" "$URL_166" "$BASE_URL" "$TS"
 
       - name: Index page
         shell: bash
         run: |
-          cat > public/index.html <<'HTML'
+          cat > public/index.html << 'HTML'
           <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
           <title>Riverty Snapshots</title>
-          <style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee}
-          a{color:#7bd}ul{line-height:1.8}</style>
+          <style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee} a{color:#7bd} ul{line-height:1.8}</style>
           <h1>Riverty Snapshots</h1>
           <ul>
             <li><a href="./470-842-351/">470-842-351</a></li>
@@ -128,28 +114,18 @@ jobs:
           LOCAL="$(TZ=Europe/Vienna date +'%Y-%m-%d %H:%M:%S %Z')"
           cat > public/health/index.html <<HTML
           <!doctype html>
-          <html lang="de">
-          <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width,initial-scale=1">
-            <title>Health</title>
-            <!-- No-Cache -->
-            <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
-            <meta http-equiv="Pragma" content="no-cache">
-            <meta http-equiv="Expires" content="0">
-            <style>
-              body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px}
-              pre{background:#1b1b1b;padding:16px;border-radius:8px;overflow:auto}
-              a{color:#7bd}
-            </style>
-          </head>
-          <body>
-            <h1>Health</h1>
-            <pre>UTC   : ${UTC}
-Vienna: ${LOCAL}</pre>
-            <p><a href="../">Zurück</a></p>
-          </body>
-          </html>
+          <html lang="de"><head>
+          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Health</title>
+          <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+          <meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">
+          <style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px} pre{background:#1b1b1b;padding:16px;border-radius:8px;overflow:auto} a{color:#7bd}</style>
+          </head><body>
+          <h1>Health</h1>
+          <pre>UTC   : ${UTC}
+          Vienna: ${LOCAL}</pre>
+          <p><a href="../">Zurueck</a></p>
+          </body></html>
           HTML
 
       - name: List files that will be deployed
@@ -164,4 +140,5 @@ Vienna: ${LOCAL}</pre>
           path: public
 
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
