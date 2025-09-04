@@ -23,8 +23,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     env:
-      URL_470: "https://phantomjscloud.com/api/browser/v2/ak-vk3pd-7m0av-nbdmz-ybd6x-v37kj/?requestBase64=eyJ1cmwiOiJodHRwczovL291ci5yaXZlcnR5LmNvbS9zZS80NzAtODQyLTM1MSIsInJlbmRlclR5cGUiOiJwbmciLCJvdXRwdXRBc0pzb24iOmZhbHNlLCJyZXF1ZXN0U2V0dGluZ3MiOnsid2FpdEludGVydmFsIjo1MDAwfSwicmVuZGVyU2V0dGluZ3MiOnsidmlld3BvcnQiOnsid2lkdGgiOjE5MjAsImhlaWdodCI6MTA4MH0sImNsaXBSZWN0YW5nbGUiOnsidG9wIjowLCJsZWZ0IjowLCJ3aWR0aCI6MTkyMCwiaGVpZ2h0IjoxMDgwfSwiem9vbUZhY3RvciI6MX19"
-      URL_166: "https://phantomjscloud.com/api/browser/v2/ak-vc67v-06nxp-vqp2q-hjynv-p9w5d/?requestBase64=eyJ1cmwiOiJodHRwczovL291ci5yaXZlcnR5LmNvbS9zZS8xNjYtNTQ0LTMzMiIsInJlbmRlclR5cGUiOiJwbmciLCJvdXRwdXRBc0pzb24iOmZhbHNlLCJyZXF1ZXN0U2V0dGluZ3MiOnsid2FpdEludGVydmFsIjo1MDAwfSwicmVuZGVyU2V0dGluZ3MiOnsidmlld3BvcnQiOnsid2lkdGgiOjE5MjAsImhlaWdodCI6MTA4MH0sImNsaXBSZWN0YW5nbGUiOnsidG9wIjowLCJsZWZ0IjowLCJ3aWR0aCI6MTkyMCwiaGVpZ2h0IjoxMDgwfSwiem9vbUZhY3RvciI6MX19"
+      URL_470: ${{ secrets.PHANTOMJS_URL_470 }}
+      URL_166: ${{ secrets.PHANTOMJS_URL_166 }}
 
     steps:
       - name: Checkout
