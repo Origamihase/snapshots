@@ -35,10 +35,8 @@ def create_calendar_html():
                 summary_str = html.escape(str(component.get('summary')))
                 dtstart_raw = component.get('dtstart').dt
                 
-                # --- NEU: Enddatum und Dauer des Termins auslesen ---
                 dtend_raw = component.get('dtend').dt if component.get('dtend') else dtstart_raw
                 
-                # Normalisiere Start- und Enddatum zu 'datetime'-Objekten für konsistente Berechnungen
                 if isinstance(dtstart_raw, date) and not isinstance(dtstart_raw, datetime):
                     dtstart = datetime.combine(dtstart_raw, time.min, tzinfo=timezone.utc)
                 else:
@@ -50,30 +48,34 @@ def create_calendar_html():
                     dtend = dtend_raw.astimezone(timezone.utc) if dtend_raw.tzinfo else dtend_raw.replace(tzinfo=timezone.utc)
                 
                 duration = dtend - dtstart
-                # --- ENDE: Enddatum und Dauer ---
 
                 def add_event_to_week(start_dt, end_dt):
-                    # Bei ganztägigen Terminen ist das Enddatum oft der exklusive Folgetag (z.B. Mo-Fr endet Sa 00:00). Korrektur für die Schleife.
                     loop_end_date = end_dt.date()
                     is_all_day_event = (isinstance(component.get('dtstart').dt, date) and not isinstance(component.get('dtstart').dt, datetime))
-                    if end_dt.time() == time.min and duration.days > 0:
-                        loop_end_date -= timedelta(days=1)
+                    if end_dt.time() == time.min and duration.days > 0 and not is_all_day_event: # Korrektur für Enddatum bei Nicht-Ganztägig
+                         loop_end_date -= timedelta(days=1)
+                    elif is_all_day_event and end_dt.time() == time.min: # Bei ganztägig, wenn Ende 00:00 ist, es ist eigentlich der Vortag
+                         loop_end_date -= timedelta(days=1)
 
                     current_date = start_dt.date()
                     while current_date <= loop_end_date:
-                        if current_date in week_events:
-                            time_str = "Ganztägig" if is_all_day_event else start_dt.strftime('%H:%M')
-                            week_events[current_date].append({
-                                'summary': summary_str,
-                                'time': time_str,
-                                'is_all_day': is_all_day_event,
-                                'start_time': start_dt
-                            })
+                        if start_of_week_dt.date() <= current_date <= (start_of_week_dt + timedelta(days=4)).date(): # Nur Mo-Fr
+                            if current_date in week_events:
+                                time_str = "Ganztägig" if is_all_day_event else start_dt.strftime('%H:%M')
+                                week_events[current_date].append({
+                                    'summary': summary_str,
+                                    'time': time_str,
+                                    'is_all_day': is_all_day_event,
+                                    'start_time': start_dt # Ursprüngliche Startzeit für Sortierung
+                                })
                         current_date += timedelta(days=1)
+
 
                 if 'RRULE' in component:
                     rrule = rrulestr(component.get('rrule').to_ical().decode(), dtstart=dtstart)
-                    occurrences = rrule.between(start_of_week_dt, end_of_week_dt, inc=True)
+                    # Erweitern des Suchbereichs um die Dauer, damit mehrtägige Ereignisse korrekt gefunden werden
+                    search_end_dt = end_of_week_dt + timedelta(days=duration.days)
+                    occurrences = rrule.between(start_of_week_dt, search_end_dt, inc=True)
                     for occ_start_dt in occurrences:
                         occ_end_dt = occ_start_dt + duration
                         add_event_to_week(occ_start_dt, occ_end_dt)
@@ -85,25 +87,39 @@ def create_calendar_html():
         
         calendar_week = start_of_week_dt.isocalendar()[1]
         
+        # --- NEUE STYLES UND LAYOUT-ANPASSUNGEN ---
         html_content = f"""
-        <!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Wochenkalender</title>
+        <!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Wochenplan</title>
         <style>
-            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f4f4f9; color: #333; margin: 0; padding: 20px; }}
-            .container {{ max-width: 1200px; margin: auto; background: #fff; padding: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.1); border-radius: 8px; }}
-            h1 {{ text-align: center; color: #333; }}
+            :root {{
+                --main-green: #4d824d;
+                --light-green: #6aa84f; /* Etwas helleres Grün für zeitgebundene Events */
+                --dark-green: #386638; /* Dunkleres Grün für ganztägige Events */
+                --text-color: #333;
+                --light-text-color: #eee;
+                --bg-color: #f4f4f9;
+                --container-bg: #fff;
+                --border-color: #eee;
+                --header-bg: #fdfdfd;
+            }}
+            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 0; }}
+            .top-bar {{ background-color: var(--main-green); padding: 15px 20px; color: var(--light-text-color); text-align: center; font-size: 1.8em; font-weight: bold; margin-bottom: 20px; }}
+            .container {{ max-width: 1200px; margin: 20px auto; background: var(--container-bg); padding: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.1); border-radius: 8px; }}
             .week-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }}
-            .day-column {{ background-color: #fdfdfd; border: 1px solid #eee; border-radius: 5px; padding: 10px; }}
-            .day-header {{ text-align: center; font-weight: bold; padding-bottom: 10px; border-bottom: 2px solid #f0f0f0; margin-bottom: 10px; }}
+            .day-column {{ background-color: var(--header-bg); border: 1px solid var(--border-color); border-radius: 5px; padding: 10px; min-height: 150px; /* Ermöglicht die Streckung */ }}
+            .day-header {{ text-align: center; font-weight: bold; padding-bottom: 10px; border-bottom: 2px solid var(--border-color); margin-bottom: 10px; }}
             .day-header .date {{ font-size: 0.9em; color: #666; font-weight: normal; }}
-            .event {{ border-left: 4px solid #007bff; margin-bottom: 8px; padding: 8px; background: #f9f9f9; border-radius: 3px; }}
-            .event.all-day {{ border-left-color: #28a745; }}
+            .event {{ margin-bottom: 8px; padding: 8px; background: #f9f9f9; border-radius: 3px; }}
+            .event.all-day {{ border-left: 4px solid var(--dark-green); }}
+            .event:not(.all-day) {{ border-left: 4px solid var(--light-green); }}
             .event-time {{ font-weight: bold; font-size: 0.9em; color: #555; }}
             .event-summary {{ font-size: 1em; }}
             .no-events {{ color: #999; text-align: center; padding-top: 20px; }}
             .footer {{ text-align: center; margin-top: 20px; font-size: 0.8em; color: #777; }}
         </style>
-        </head><body><div class="container">
-        <h1>Arbeitswoche (KW {calendar_week})</h1>
+        </head><body>
+        <div class="top-bar">Wochenplan (KW {calendar_week})</div>
+        <div class="container">
         <div class="week-grid">
         """
         days_german = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]
