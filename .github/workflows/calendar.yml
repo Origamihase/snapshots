@@ -34,10 +34,9 @@ jobs:
           pip install requests icalendar
 
       - name: 4. Python-Skript ausführen
-        # Hier wird das Secret als Environment-Variable für das Skript bereitgestellt
         env:
           ICS_URL: ${{ secrets.ICS_CALENDAR_URL }}
-        run: python erstelle_kalender.py
+        run: python .github/workflows/erstelle_kalender.py
 
       - name: 5. Artefakt für Pages vorbereiten
         run: |
