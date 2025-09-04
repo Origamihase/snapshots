@@ -2,11 +2,20 @@
 # -*- coding: utf-8 -*-
 """
 Erstellt eine statische Wochenübersicht (Mo–Fr) als HTML aus einer ICS-Quelle.
-- Design: Hell, an Referenz-Screenshot angelehnt
-- Logik: Korrekte Verarbeitung von Serienterminen inkl. Ausnahmen und Modifikationen
+
+- Zielauflösung: 1920×1080 (Full-HD TV)
+- Reines HTML + CSS, kein JavaScript
+- Performance: ein eingebetteter CSS-Block, Systemschriften
+- Aktueller Tag: dezente grüne Umrandung
+- Fußzeile: steht immer am Seitenende (Sticky-Footer)
+- Branding: Kopfzeilen-Grün fest im Code
+
+Voraussetzung: Environment-Variable ICS_URL mit der öffentlich erreichbaren ICS-Datei.
+Ausgabe: public/calendar/index.html
 """
 
 from __future__ import annotations
+
 import os
 import sys
 import html
@@ -19,15 +28,17 @@ from typing import Any, Dict, List
 
 OUTPUT_HTML_FILE = "public/calendar/index.html"
 
+
 def to_utc_from_prop(dt_raw: date | datetime, tz_local: ZoneInfo) -> datetime:
     """Normalisiert ICS-Zeitwerte zuverlässig nach UTC."""
     if isinstance(dt_raw, date) and not isinstance(dt_raw, datetime):
         # All-Day-Events werden als lokale Mitternacht interpretiert und nach UTC konvertiert
-        return tz_local.localize(datetime.combine(dt_raw, time.min)).astimezone(timezone.utc)
+        return dt_raw.replace(tzinfo=tz_local).astimezone(timezone.utc)
     if getattr(dt_raw, "tzinfo", None):
         return dt_raw.astimezone(timezone.utc)
     # Naive Datetimes als lokale Zeit annehmen und nach UTC konvertieren
-    return tz_local.localize(dt_raw).astimezone(timezone.utc)
+    return dt_raw.replace(tzinfo=tz_local).astimezone(timezone.utc)
+
 
 def erstelle_kalender_html() -> None:
     """Hauptfunktion zur Erstellung des HTML-Kalenders."""
@@ -87,6 +98,7 @@ def erstelle_kalender_html() -> None:
             if "rrule" in component:
                 rrule = rrulestr(component.get('rrule').to_ical().decode('utf-8'), dtstart=dtstart_utc)
                 exdates = {to_utc_from_prop(d.dt, tz_vienna) for ex in component.get("exdate", []) for d in ex.dts}
+                
                 pad = duration if duration > timedelta(0) else timedelta(days=1)
                 search_start = start_of_week_dt - pad
                 
@@ -174,7 +186,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans
         events_for_day = sorted(week_events.get(current_date_local, []), key=lambda x: (not x["is_all_day"], x["start_time"]))
         is_today_cls = " today" if current_date_local == now_vienna.date() else ""
         
-        html_parts.append(f'<div class="day-column{is_today_cls}"><div class="day-header">{day_name}<div class="date">{current_date_local.strftime("%d.%m.")}</div></div>')
+        html_parts.append(f'<div class="day-column{is_today_cls}"><div class="day-header">{day_name}<div class="date">{current_date_local.strftime("%d.%m.")}</div></div><div class="events">')
         if not events_for_day:
             html_parts.append('<div class="no-events">-</div>')
         else:
