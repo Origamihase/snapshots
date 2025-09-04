@@ -1,8 +1,8 @@
-name: riverty-snapshots
+name: Website Snapshots
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # alle 30 Minuten (UTC)
+    - cron: '*/30 * * * *'    # alle 30 Minuten (UTC)
   workflow_dispatch:
 
 permissions:
@@ -23,6 +23,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     env:
+      PROJECT_NAME: "Website"  # <-- HIER ANPASSEN
       URL_470: ${{ secrets.PHANTOMJS_URL_470 }}
       URL_166: ${{ secrets.PHANTOMJS_URL_166 }}
 
@@ -50,7 +51,7 @@ jobs:
           cat > safe_fetch.sh << 'SH'
           #!/usr/bin/env bash
           set -euo pipefail
-          ID="$1"; REMOTE="$2"; BASE="$3"; TS="$4"
+          ID="$1"; REMOTE="$2"; BASE="$3"; TS="$4"; P_NAME="$5"
           OUTDIR="public/${ID}"
           IMG="${OUTDIR}/image.png"
           TMP="${OUTDIR}/.new.png"
@@ -73,11 +74,11 @@ jobs:
           cat > "${OUTDIR}/index.html" <<HTML
           <!doctype html><html lang="de"><head>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Riverty ${ID}</title>
+          <title>${P_NAME} | ${ID}</title>
           <meta http-equiv="refresh" content="1800">
           <style>html,body{height:100%;margin:0;background:#000} img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
           </head><body>
-          <img src="image.png?v=${TS}" alt="Riverty ${ID}">
+          <img src="image.png?v=${TS}" alt="${P_NAME} Snapshot ${ID}">
           </body></html>
           HTML
           SH
@@ -85,20 +86,20 @@ jobs:
 
       - name: Update 470-842-351
         shell: bash
-        run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL" "$TS"
+        run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL" "$TS" "$PROJECT_NAME"
 
       - name: Update 166-544-332
         shell: bash
-        run: ./safe_fetch.sh "166-544-332" "$URL_166" "$BASE_URL" "$TS"
+        run: ./safe_fetch.sh "166-544-332" "$URL_166" "$BASE_URL" "$TS" "$PROJECT_NAME"
 
       - name: Index page
         shell: bash
         run: |
-          cat > public/index.html << 'HTML'
+          cat > public/index.html << HTML
           <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Riverty Snapshots</title>
+          <title>${PROJECT_NAME} Snapshots</title>
           <style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee} a{color:#7bd} ul{line-height:1.8}</style>
-          <h1>Riverty Snapshots</h1>
+          <h1>${PROJECT_NAME} Snapshots</h1>
           <ul>
             <li><a href="./470-842-351/">470-842-351</a></li>
             <li><a href="./166-544-332/">166-544-332</a></li>
