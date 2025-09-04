@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 Erstellt eine statische Wochenübersicht (Mo–Fr) als HTML aus einer ICS-Quelle.
+- Design: Hell, an Referenz-Screenshot angelehnt
 - Logik: Korrekte Verarbeitung von Serienterminen inkl. Ausnahmen und Modifikationen
 """
 
 from __future__ import annotations
-
 import os
 import sys
 import html
@@ -19,15 +19,15 @@ from typing import Any, Dict, List
 
 OUTPUT_HTML_FILE = "public/calendar/index.html"
 
-
 def to_utc_from_prop(dt_raw: date | datetime, tz_local: ZoneInfo) -> datetime:
     """Normalisiert ICS-Zeitwerte zuverlässig nach UTC."""
     if isinstance(dt_raw, date) and not isinstance(dt_raw, datetime):
+        # All-Day-Events werden als lokale Mitternacht interpretiert und nach UTC konvertiert
         return tz_local.localize(datetime.combine(dt_raw, time.min)).astimezone(timezone.utc)
     if getattr(dt_raw, "tzinfo", None):
         return dt_raw.astimezone(timezone.utc)
+    # Naive Datetimes als lokale Zeit annehmen und nach UTC konvertieren
     return tz_local.localize(dt_raw).astimezone(timezone.utc)
-
 
 def erstelle_kalender_html() -> None:
     """Hauptfunktion zur Erstellung des HTML-Kalenders."""
@@ -55,7 +55,7 @@ def erstelle_kalender_html() -> None:
         end_of_week_dt = end_of_week_local.astimezone(timezone.utc)
 
         week_events: Dict[date, List[Dict[str, Any]]] = {(start_of_week_local.date() + timedelta(days=i)): [] for i in range(5)}
-
+        
         overrides: Dict[str, Dict[datetime, Any]] = {}
         for component in cal.walk("VEVENT"):
             uid = str(component.get("uid"))
@@ -81,29 +81,29 @@ def erstelle_kalender_html() -> None:
             else:
                 dtend_raw = dtend_prop.dt if dtend_prop else dtstart_raw
                 dtend_utc = to_utc_from_prop(dtend_raw, tz_vienna)
-
+            
             duration = dtend_utc - dtstart_utc
-
+            
             if "rrule" in component:
                 rrule = rrulestr(component.get('rrule').to_ical().decode('utf-8'), dtstart=dtstart_utc)
                 exdates = {to_utc_from_prop(d.dt, tz_vienna) for ex in component.get("exdate", []) for d in ex.dts}
                 pad = duration if duration > timedelta(0) else timedelta(days=1)
                 search_start = start_of_week_dt - pad
-
+                
                 for occ_start_utc in rrule.between(search_start, end_of_week_dt, inc=True):
                     if occ_start_utc in exdates:
                         continue
-
+                    
                     uid = str(component.get("uid"))
                     effective_component = overrides.get(uid, {}).get(occ_start_utc, component)
-
+                    
                     if 'Ehemaliger Benutzer (Deleted)' in str(effective_component.get("organizer", "")):
-                        continue
+                         continue
 
                     eff_summary = html.escape(str(effective_component.get("summary", "Ohne Titel")))
                     eff_dtstart_raw = effective_component.get("dtstart").dt
                     eff_dtstart_utc = to_utc_from_prop(eff_dtstart_raw, tz_vienna)
-
+                    
                     eff_dtend_prop = effective_component.get("dtend")
                     eff_duration_prop = effective_component.get("duration")
                     if not eff_dtend_prop and eff_duration_prop:
@@ -111,7 +111,7 @@ def erstelle_kalender_html() -> None:
                     else:
                         eff_dtend_raw = eff_dtend_prop.dt if eff_dtend_prop else eff_dtstart_raw
                         eff_dtend_utc = to_utc_from_prop(eff_dtend_raw, tz_vienna)
-
+                    
                     add_event_to_week(week_events, effective_component, eff_dtstart_utc, eff_dtend_utc, eff_summary, tz_vienna, start_of_week_local.date())
             else:
                 add_event_to_week(week_events, component, dtstart_utc, dtend_utc, summary_str, tz_vienna, start_of_week_local.date())
@@ -134,7 +134,7 @@ def add_event_to_week(week_events, component, start_dt, end_dt, summary, tz_vien
     current_date = start_local.date()
     while current_date <= loop_end_date:
         if week_start_date <= current_date < week_start_date + timedelta(days=5):
-            time_str = "Ganztägig" if is_all_day else f"{start_local.strftime('%H:%M')} - {end_local.strftime('%H:%M')}"
+            time_str = "Ganztägig" if is_all_day else f"{start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')}"
             week_events[current_date].append({"summary": summary, "time": time_str, "is_all_day": is_all_day, "start_time": start_dt})
         current_date += timedelta(days=1)
 
@@ -149,9 +149,9 @@ def generate_html(week_events, start_of_week_local, now_vienna):
     --text-color: #333; --light-text-color: #fff; --bg-color: #f4f4f9;
     --container-bg: #fff; --border-color: #eee; --header-bg: #fdfdfd;
 }}
-body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 0; }}
-.top-bar {{ background-color: var(--main-green); padding: 15px 20px; color: var(--light-text-color); text-align: center; font-size: 1.8em; font-weight: bold; margin-bottom: 20px; }}
-.container {{ max-width: 95%; margin: 20px auto; background: var(--container-bg); padding: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.1); border-radius: 8px; }}
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 0; display: flex; flex-direction: column; min-height: 100vh;}}
+.top-bar {{ background-color: var(--main-green); padding: 15px 20px; color: var(--light-text-color); text-align: center; font-size: 1.8em; font-weight: bold;}}
+.container {{ max-width: 95%; margin: 20px auto; background: var(--container-bg); padding: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.1); border-radius: 8px; flex: 1;}}
 .week-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }}
 .day-column {{ background-color: var(--header-bg); border: 1px solid var(--border-color); border-radius: 5px; padding: 10px; min-height: 150px; }}
 .day-header {{ text-align: center; font-weight: bold; padding-bottom: 10px; border-bottom: 2px solid var(--border-color); margin-bottom: 10px; }}
@@ -163,7 +163,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans
 .event-time {{ font-weight: bold; font-size: 0.9em; color: #555; }}
 .event-summary {{ font-size: 1em; }}
 .no-events {{ color: #999; text-align: center; padding-top: 20px; }}
-.footer {{ text-align: center; margin-top: 20px; font-size: 0.8em; color: #777; }}
+.footer {{ text-align: center; margin-top: auto; padding: 20px; font-size: 0.8em; color: #777; }}
 </style></head><body>
 <div class="top-bar">Wochenplan (KW {calendar_week})</div>
 <div class="container">
