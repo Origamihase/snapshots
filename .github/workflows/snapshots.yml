@@ -42,8 +42,20 @@ jobs:
           : > public/.nojekyll
           echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
           OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          REPO_LOWER="$(echo "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
-          echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_LOWER}" >> "$GITHUB_ENV"
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          REPO_LOWER="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]')"
+          if [ "${REPO_LOWER}" = "${OWNER_LOWER}.github.io" ]; then
+            echo "BASE_URL=https://${OWNER_LOWER}.github.io" >> "$GITHUB_ENV"
+          else
+            echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_LOWER}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${URL_470:?Secret PHANTOMJS_URL_470 ist nicht gesetzt oder leer. Bitte im Repository unter Settings → Secrets and variables → Actions anlegen.}"
+          : "${URL_166:?Secret PHANTOMJS_URL_166 ist nicht gesetzt oder leer. Bitte im Repository unter Settings → Secrets and variables → Actions anlegen.}"
 
       - name: Helper (safe fetch & publish)
         shell: bash
