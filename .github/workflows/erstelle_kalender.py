@@ -12,6 +12,8 @@ Erstellt eine statische Wochenübersicht (Mo–Fr) als HTML aus einer ICS-Quelle
 
 Voraussetzung: Environment-Variable ICS_URL mit der öffentlich erreichbaren ICS-Datei.
 Ausgabe: public/calendar/index.html
+
+Benötigte Pakete: requests, icalendar, python-dateutil (rrule); Python >= 3.9 (zoneinfo).
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from icalendar import Calendar
 from zoneinfo import ZoneInfo
 from dateutil.rrule import rrulestr
 from datetime import datetime, date, time, timezone, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set, Tuple
 
 OUTPUT_HTML_FILE = "public/calendar/index.html"
 
@@ -38,6 +40,7 @@ def erstelle_kalender_html() -> None:
 
     print("Lade Kalender von der bereitgestellten URL...")
 
+    # 1) ICS laden
     try:
         response = requests.get(ics_url, timeout=30)
         response.raise_for_status()
@@ -45,43 +48,47 @@ def erstelle_kalender_html() -> None:
         print(f"Fehler beim Herunterladen der ICS-Datei: {e}", file=sys.stderr)
         sys.exit(2)
 
-    # ICS parsen
+    # 2) ICS parsen
     try:
         cal = Calendar.from_ical(response.content)
     except Exception as e:
         print(f"Fehler beim Parsen der ICS-Datei: {e}", file=sys.stderr)
         sys.exit(2)
 
+    # 3) Verarbeitung + HTML-Erzeugung
     try:
         tz_vienna = ZoneInfo("Europe/Vienna")
         now_vienna = datetime.now(tz_vienna)
 
-        # Wochenanfang/-ende in LOKALER ZEIT bestimmen (Mo–Fr), dann für Suchen nach UTC
+        # Woche in lokaler Zeit bestimmen (Montag 00:00 bis Freitag 23:59:59)
         start_of_week_local = now_vienna.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
             days=now_vienna.weekday()
         )
         end_of_week_local = start_of_week_local + timedelta(days=4, hours=23, minutes=59, seconds=59)
 
+        # Für Wiederholungs-Suche in UTC umrechnen
         start_of_week_dt = start_of_week_local.astimezone(timezone.utc)
         end_of_week_dt = end_of_week_local.astimezone(timezone.utc)
 
         monday_vie = start_of_week_local.date()
         friday_vie = (start_of_week_local + timedelta(days=4)).date()
 
-        # Buckets pro LOKALEM Datum
+        # Buckets pro lokalem Datum
         week_events: Dict[date, List[Dict[str, Any]]] = {
             (start_of_week_local.date() + timedelta(days=i)): [] for i in range(5)
         }
+        # Deduplizierung pro Tag (z. B. bei RRULE + RDATE)
+        seen_per_day: Dict[date, Set[Tuple[str, str, datetime]]] = {d: set() for d in week_events}
+
         min_week_local = start_of_week_local.date()
         max_week_local = (start_of_week_local + timedelta(days=4)).date()
 
         def to_utc_from_prop(dt_raw: date | datetime) -> datetime:
             """
-            Hilfsfunktion:
-            - Wenn DATE → mit Wien kombinieren (00:00) und nach UTC
-            - Wenn DATETIME:
-                - mit TZ → nach UTC
-                - ohne TZ → als Wien interpretieren, dann nach UTC
+            Normalisiert ICS-Zeitwerte nach UTC:
+              - DATE → in Wien (00:00) kombinieren, dann nach UTC
+              - DATETIME mit TZ → nach UTC
+              - DATETIME ohne TZ → Wien annehmen, dann nach UTC
             """
             if isinstance(dt_raw, date) and not isinstance(dt_raw, datetime):
                 return datetime.combine(dt_raw, time.min, tzinfo=tz_vienna).astimezone(timezone.utc)
@@ -93,18 +100,20 @@ def erstelle_kalender_html() -> None:
                               summary: str, duration: timedelta) -> None:
             """
             Fügt ein Ereignis allen betroffenen lokalen Tagen in week_events hinzu.
-            start_dt/end_dt sind UTC; Anzeige und Tageslogik erfolgen in Wien-Zeit.
+            start_dt/end_dt sind UTC; Anzeige- und Tageslogik erfolgen in Wien-Zeit.
             """
             start_local = start_dt.astimezone(tz_vienna)
             end_local = end_dt.astimezone(tz_vienna)
 
-            # Erkennen, ob das Original-Event ganztägig angelegt war (DATE)
+            # Erkennen, ob das Original-Event ganztägig (DATE) ist
             is_all_day_event = (
                 isinstance(component.get("dtstart").dt, date)
                 and not isinstance(component.get("dtstart").dt, datetime)
             )
 
-            # DTEND ist exklusiv: Wenn ganztägig ODER end_local == 00:00 und Dauer > 0 → einen Tag weniger anzeigen
+            # DTEND ist exklusiv:
+            # - Ganztägig: EXKLUSIV → letzten angezeigten Tag um 1 reduzieren
+            # - Zeitbasiert: endet exakt 00:00 und Dauer > 0 → ebenfalls -1 Tag
             loop_end_date = end_local.date()
             if is_all_day_event or (end_local.time() == time.min and duration > timedelta(0)):
                 loop_end_date -= timedelta(days=1)
@@ -122,7 +131,7 @@ def erstelle_kalender_html() -> None:
                         time_str = "Ganztägig"
                         mark_all_day = True
                     elif same_day:
-                        # Punkttermin vs. echte Spanne
+                        # Zeitspanne oder Punkttermin am selben Tag
                         if duration > timedelta(0):
                             time_str = f"{start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')}"
                         else:
@@ -147,12 +156,16 @@ def erstelle_kalender_html() -> None:
                         time_str = "Ganztägig"
                         mark_all_day = True
 
-                    week_events[current_date].append({
-                        "summary": summary,
-                        "time": time_str,
-                        "is_all_day": mark_all_day,
-                        "start_time": start_dt,  # für Sortierung
-                    })
+                    # Deduplizierung (z. B. falls dieselbe Instanz über RRULE/RDATE doppelt kommt)
+                    key = (summary, time_str, start_dt)
+                    if key not in seen_per_day[current_date]:
+                        seen_per_day[current_date].add(key)
+                        week_events[current_date].append({
+                            "summary": summary,
+                            "time": time_str,
+                            "is_all_day": mark_all_day,
+                            "start_time": start_dt,  # für Sortierung
+                        })
                 current_date += timedelta(days=1)
 
         # VEVENTs durchlaufen
@@ -176,11 +189,10 @@ def erstelle_kalender_html() -> None:
                 if not dtend_prop and duration_prop:
                     dtend = dtstart + duration_prop.dt
                 elif not dtend_prop and not duration_prop:
-                    # RFC-konform: Wenn ganztägig (DATE) ohne DTEND/DURATION → 1 Tag
+                    # RFC-konform: DATE ohne DTEND/DURATION → 1 Tag; sonst punktuell ohne Dauer
                     if isinstance(dtstart_raw, date) and not isinstance(dtstart_raw, datetime):
                         dtend = dtstart + timedelta(days=1)
                     else:
-                        # punktuelles Event ohne Dauer
                         dtend = dtstart
                 else:
                     dtend = to_utc_from_prop(dtend_prop.dt)
@@ -188,7 +200,7 @@ def erstelle_kalender_html() -> None:
                 duration = dtend - dtstart
 
                 # EXDATE sammeln (UTC)
-                exdates = set()
+                exdates: Set[datetime] = set()
                 ex_prop = component.get("exdate")
                 ex_list = ex_prop if isinstance(ex_prop, list) else ([ex_prop] if ex_prop else [])
                 for ex in ex_list:
@@ -196,11 +208,10 @@ def erstelle_kalender_html() -> None:
                         ex_dt = to_utc_from_prop(d.dt)
                         exdates.add(ex_dt)
 
-                # RRULE
+                # RRULE-Verarbeitung
                 rrule_prop = component.get("rrule")
                 if rrule_prop:
                     rrule = rrulestr(rrule_prop.to_ical().decode(), dtstart=dtstart)
-                    # pad: Events, die VOR der Woche starten, aber in die Woche ragen (z. B. 23:00–02:00)
                     pad = duration if duration > timedelta(0) else timedelta(0)
                     search_start_dt = start_of_week_dt - pad
                     search_end_dt = end_of_week_dt
@@ -218,6 +229,8 @@ def erstelle_kalender_html() -> None:
                 for r in rdate_list:
                     for d in r.dts:
                         r_dt = to_utc_from_prop(d.dt)
+                        if r_dt in exdates:
+                            continue
                         add_event_to_week(component, r_dt, r_dt + duration, summary_str, duration)
 
             except Exception as e:
@@ -280,7 +293,7 @@ footer.foot{{color:#6b7280;font-size:13px;text-align:center;padding:6px 0 12px;m
         for i, day_name in enumerate(["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]):
             current_date_local = monday_vie + timedelta(days=i)
             events_for_day = week_events.get(current_date_local, [])
-            # Sortierung: Ganztägig zuerst, dann nach Startzeit, dann Summary
+            # Sortierung: Ganztägig zuerst, dann nach Startzeit, dann nach Summary
             events_for_day.sort(key=lambda x: (not x["is_all_day"], x["start_time"], x["summary"].lower()))
             is_today_cls = " today" if current_date_local == now_vienna.date() else ""
 
