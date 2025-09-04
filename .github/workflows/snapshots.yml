@@ -46,7 +46,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Verzeichnisse für alle Teile der Seite erstellen
           mkdir -p public/470-842-351 public/166-544-332 public/calendar public/health
           : > public/.nojekyll
           echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
@@ -59,7 +58,8 @@ jobs:
           fi
 
       - name: 5. Kalender-HTML erstellen
-        run: python erstelle_kalender.py
+        # HIER IST DIE KORREKTUR: Der Pfad zum Skript wurde hinzugefügt.
+        run: python .github/workflows/erstelle_kalender.py
       
       - name: 6. Helfer-Skript für Snapshots erstellen
         shell: bash
