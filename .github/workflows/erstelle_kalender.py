@@ -1,6 +1,6 @@
 import requests
 from icalendar import Calendar, vRecur
-from datetime import datetime, date, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta, time
 from dateutil.rrule import rrulestr
 import html
 import os
@@ -34,46 +34,57 @@ def create_calendar_html():
             try:
                 summary_str = html.escape(str(component.get('summary')))
                 dtstart_raw = component.get('dtstart').dt
-
+                
+                # --- NEU: Enddatum und Dauer des Termins auslesen ---
+                dtend_raw = component.get('dtend').dt if component.get('dtend') else dtstart_raw
+                
+                # Normalisiere Start- und Enddatum zu 'datetime'-Objekten für konsistente Berechnungen
                 if isinstance(dtstart_raw, date) and not isinstance(dtstart_raw, datetime):
-                    dtstart = datetime.combine(dtstart_raw, datetime.min.time(), tzinfo=timezone.utc)
+                    dtstart = datetime.combine(dtstart_raw, time.min, tzinfo=timezone.utc)
                 else:
                     dtstart = dtstart_raw.astimezone(timezone.utc) if dtstart_raw.tzinfo else dtstart_raw.replace(tzinfo=timezone.utc)
+
+                if isinstance(dtend_raw, date) and not isinstance(dtend_raw, datetime):
+                    dtend = datetime.combine(dtend_raw, time.min, tzinfo=timezone.utc)
+                else:
+                    dtend = dtend_raw.astimezone(timezone.utc) if dtend_raw.tzinfo else dtend_raw.replace(tzinfo=timezone.utc)
+                
+                duration = dtend - dtstart
+                # --- ENDE: Enddatum und Dauer ---
+
+                def add_event_to_week(start_dt, end_dt):
+                    # Bei ganztägigen Terminen ist das Enddatum oft der exklusive Folgetag (z.B. Mo-Fr endet Sa 00:00). Korrektur für die Schleife.
+                    loop_end_date = end_dt.date()
+                    is_all_day_event = (isinstance(component.get('dtstart').dt, date) and not isinstance(component.get('dtstart').dt, datetime))
+                    if end_dt.time() == time.min and duration.days > 0:
+                        loop_end_date -= timedelta(days=1)
+
+                    current_date = start_dt.date()
+                    while current_date <= loop_end_date:
+                        if current_date in week_events:
+                            time_str = "Ganztägig" if is_all_day_event else start_dt.strftime('%H:%M')
+                            week_events[current_date].append({
+                                'summary': summary_str,
+                                'time': time_str,
+                                'is_all_day': is_all_day_event,
+                                'start_time': start_dt
+                            })
+                        current_date += timedelta(days=1)
 
                 if 'RRULE' in component:
                     rrule = rrulestr(component.get('rrule').to_ical().decode(), dtstart=dtstart)
                     occurrences = rrule.between(start_of_week_dt, end_of_week_dt, inc=True)
-                    
-                    for occ_dt in occurrences:
-                        event_date = occ_dt.date()
-                        is_all_day = (isinstance(component.get('dtstart').dt, date) and not isinstance(component.get('dtstart').dt, datetime))
-                        
-                        if event_date in week_events:
-                            time_str = "Ganztägig" if is_all_day else occ_dt.strftime('%H:%M')
-                            week_events[event_date].append({
-                                'summary': summary_str,
-                                'time': time_str,
-                                'is_all_day': is_all_day,
-                                'start_time': occ_dt
-                            })
+                    for occ_start_dt in occurrences:
+                        occ_end_dt = occ_start_dt + duration
+                        add_event_to_week(occ_start_dt, occ_end_dt)
                 else:
-                    event_date = dtstart.date()
-                    if start_of_week_dt.date() <= event_date <= end_of_week_dt.date():
-                        is_all_day = isinstance(dtstart_raw, date) and not isinstance(dtstart_raw, datetime)
-                        time_str = "Ganztägig" if is_all_day else dtstart.strftime('%H:%M')
-                        week_events[event_date].append({
-                            'summary': summary_str,
-                            'time': time_str,
-                            'is_all_day': is_all_day,
-                            'start_time': dtstart
-                        })
+                    add_event_to_week(dtstart, dtend)
+
             except Exception as e:
                 print(f"Fehler beim Verarbeiten eines Termins ('{summary_str}'): {e}")
         
-        # HIER WIRD DIE KALENDERWOCHE ERMITTELT
         calendar_week = start_of_week_dt.isocalendar()[1]
         
-        # HTML-Generierung mit der neuen Überschrift
         html_content = f"""
         <!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Wochenkalender</title>
         <style>
