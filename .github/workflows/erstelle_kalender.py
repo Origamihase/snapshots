@@ -1,6 +1,7 @@
 import requests
-from icalendar import Calendar
+from icalendar import Calendar, vRecur
 from datetime import datetime, date, timezone, timedelta
+from dateutil.rrule import rrulestr
 import html
 import os
 import sys
@@ -22,45 +23,53 @@ def create_calendar_html():
         
         cal = Calendar.from_ical(cal_content)
         
-        # --- NEU: DEBUG-AUSGABE ALLER GEFUNDENEN TERMINE ---
-        print("\n--- DEBUG: Alle gefundenen Termine im ICS File ---")
-        has_any_events = False
-        for component in cal.walk('VEVENT'):
-            has_any_events = True
-            summary = component.get('summary')
-            start_time = component.get('dtstart').dt
-            print(f"  -> Gefunden: '{summary}' am {start_time}")
-        if not has_any_events:
-            print("  -> KEINE TERMINE im gesamten ICS File gefunden.")
-        print("--- ENDE DEBUG ---\n")
-        # --- ENDE DEBUG-AUSGABE ---
+        today_utc = datetime.now(timezone.utc)
+        start_of_week_dt = today_utc - timedelta(days=today_utc.weekday())
+        end_of_week_dt = start_of_week_dt + timedelta(days=4, hours=23, minutes=59, seconds=59)
 
-        today_utc = datetime.now(timezone.utc).date()
-        start_of_week = today_utc - timedelta(days=today_utc.weekday())
-        end_of_week = start_of_week + timedelta(days=4)
-
-        week_events = {start_of_week + timedelta(days=i): [] for i in range(5)}
+        # Datenstruktur zur Speicherung der Termine pro Tag
+        week_events = {start_of_week_dt.date() + timedelta(days=i): [] for i in range(5)}
 
         for component in cal.walk('VEVENT'):
             try:
-                start_time = component.get('dtstart').dt
                 summary_str = html.escape(str(component.get('summary')))
-                
-                event_date = start_time if isinstance(start_time, date) and not isinstance(start_time, datetime) else start_time.date()
+                dtstart = component.get('dtstart').dt
 
-                if start_of_week <= event_date <= end_of_week:
-                    is_all_day = not isinstance(start_time, datetime)
-                    time_str = "Ganztägig" if is_all_day else start_time.strftime('%H:%M')
+                # --- LOGIK FÜR WIEDERHOLENDE TERMINE ---
+                if 'RRULE' in component:
+                    rrule = rrulestr(component.get('rrule').to_ical().decode(), dtstart=dtstart)
+                    # Finde alle Vorkommen in der aktuellen Arbeitswoche
+                    occurrences = rrule.between(start_of_week_dt, end_of_week_dt)
                     
-                    week_events[event_date].append({
-                        'summary': summary_str,
-                        'time': time_str,
-                        'is_all_day': is_all_day,
-                        'start_time': start_time
-                    })
+                    for occ_dt in occurrences:
+                        event_date = occ_dt.date()
+                        is_all_day = not isinstance(occ_dt, datetime) or (occ_dt.hour == 0 and occ_dt.minute == 0)
+                        
+                        # Korrigiere Zeitzonenproblem für den Vergleich
+                        if event_date in week_events:
+                            time_str = "Ganztägig" if is_all_day else occ_dt.strftime('%H:%M')
+                            week_events[event_date].append({
+                                'summary': summary_str,
+                                'time': time_str,
+                                'is_all_day': True, # Wiederholte Termine wie Küchendienst sind oft ganztägig
+                                'start_time': occ_dt
+                            })
+                # --- LOGIK FÜR EINMALIGE TERMINE ---
+                else:
+                    event_date = dtstart if isinstance(dtstart, date) and not isinstance(dtstart, datetime) else dtstart.date()
+                    if start_of_week_dt.date() <= event_date <= end_of_week_dt.date():
+                        is_all_day = not isinstance(dtstart, datetime)
+                        time_str = "Ganztägig" if is_all_day else dtstart.strftime('%H:%M')
+                        week_events[event_date].append({
+                            'summary': summary_str,
+                            'time': time_str,
+                            'is_all_day': is_all_day,
+                            'start_time': dtstart
+                        })
             except Exception as e:
-                print(f"Fehler beim Verarbeiten eines Termins: {e}")
+                print(f"Fehler beim Verarbeiten eines Termins ('{summary_str}'): {e}")
 
+        # HTML-Generierung (unverändert)
         html_content = f"""
         <!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Wochenkalender</title>
         <style>
@@ -79,23 +88,18 @@ def create_calendar_html():
             .footer {{ text-align: center; margin-top: 20px; font-size: 0.8em; color: #777; }}
         </style>
         </head><body><div class="container">
-        <h1>Arbeitswoche ({start_of_week.strftime('%d.%m')} - {end_of_week.strftime('%d.%m.%Y')})</h1>
+        <h1>Arbeitswoche ({start_of_week_dt.strftime('%d.%m')} - {end_of_week_dt.strftime('%d.%m.%Y')})</h1>
         <div class="week-grid">
         """
-
         days_german = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]
-        
         for i, day_name in enumerate(days_german):
-            current_date = start_of_week + timedelta(days=i)
+            current_date = start_of_week_dt.date() + timedelta(days=i)
             events_for_day = week_events.get(current_date, [])
-            
             events_for_day.sort(key=lambda x: (not x['is_all_day'], x['start_time']))
-
             html_content += f"""
             <div class="day-column">
                 <div class="day-header">{day_name}<div class="date">{current_date.strftime('%d.%m.')}</div></div>
             """
-            
             if not events_for_day:
                 html_content += '<div class="no-events">-</div>'
             else:
@@ -108,8 +112,6 @@ def create_calendar_html():
                     </div>
                     """
             html_content += "</div>"
-
-        # KORRIGIERTER FOOTER (mit f-string)
         html_content += f"""
         </div>
         <div class="footer">
@@ -120,7 +122,6 @@ def create_calendar_html():
 
         with open(OUTPUT_HTML_FILE, 'w', encoding='utf-8') as f:
             f.write(html_content)
-            
         print(f"Fertig! Wochenkalender wurde erfolgreich in '{OUTPUT_HTML_FILE}' erstellt.")
 
     except requests.exceptions.RequestException as e:
