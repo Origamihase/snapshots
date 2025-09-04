@@ -24,10 +24,8 @@ jobs:
 
     env:
       PROJECT_NAME: "Website"
-      # Secrets für Snapshots
       URL_470: ${{ secrets.PHANTOMJS_URL_470 }}
       URL_166: ${{ secrets.PHANTOMJS_URL_166 }}
-      # Secret für Kalender
       ICS_URL: ${{ secrets.ICS_CALENDAR_URL }}
 
     steps:
@@ -40,7 +38,8 @@ jobs:
           python-version: '3.11'
 
       - name: 3. Python-Abhängigkeiten installieren
-        run: pip install requests icalendar
+        # HIER IST DIE ÄNDERUNG: python-dateutil wurde hinzugefügt
+        run: pip install requests icalendar python-dateutil
 
       - name: 4. Verzeichnisse vorbereiten und BASE_URL setzen
         shell: bash
@@ -58,9 +57,10 @@ jobs:
           fi
 
       - name: 5. Kalender-HTML erstellen
-        # HIER IST DIE KORREKTUR: Der Pfad zum Skript wurde hinzugefügt.
         run: python .github/workflows/erstelle_kalender.py
       
+      # ... der Rest der Datei bleibt unverändert ...
+
       - name: 6. Helfer-Skript für Snapshots erstellen
         shell: bash
         run: |
