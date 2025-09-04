@@ -1,11 +1,11 @@
 import requests
 from icalendar import Calendar
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 import html
 import os
 import sys
 
-# Der Ausgabepfad wird jetzt so angepasst, dass er in den 'public'-Ordner schreibt
+# Ausgabepfad bleibt unverändert
 OUTPUT_HTML_FILE = "public/calendar/index.html"
 
 def create_calendar_html():
@@ -23,70 +23,97 @@ def create_calendar_html():
         
         cal = Calendar.from_ical(cal_content)
         
-        events = []
-        
-        # Heutiges Datum in UTC für einen sauberen Vergleich holen
+        # --- NEUE LOGIK: Arbeitswoche (Mo-Fr) berechnen ---
         today_utc = datetime.now(timezone.utc).date()
+        start_of_week = today_utc - timedelta(days=today_utc.weekday()) # Montag
+        end_of_week = start_of_week + timedelta(days=4) # Freitag
+
+        # Datenstruktur zur Speicherung der Termine pro Tag
+        # z.B. {'2025-09-01': [{'summary': 'Meeting', 'time': '10:00', 'is_all_day': False}, ...]}
+        week_events = {start_of_week + timedelta(days=i): [] for i in range(5)}
 
         for component in cal.walk('VEVENT'):
             try:
                 start_time = component.get('dtstart').dt
-                summary = component.get('summary')
+                summary_str = html.escape(str(component.get('summary')))
                 
-                # Korrigierte Filterlogik:
-                # Wir normalisieren die Startzeit zu einem einfachen Datum für den Vergleich.
-                # Das funktioniert für 'datetime' und 'date' Objekte.
-                start_date = start_time if isinstance(start_time, date) and not isinstance(start_time, datetime) else start_time.date()
+                event_date = start_time if isinstance(start_time, date) and not isinstance(start_time, datetime) else start_time.date()
 
-                # Nur Termine behalten, die heute oder in der Zukunft liegen
-                if start_date < today_utc:
-                    continue
-
-                events.append({
-                    'start_time': start_time,
-                    'summary': summary
-                })
+                # Nur Termine innerhalb der aktuellen Arbeitswoche berücksichtigen
+                if start_of_week <= event_date <= end_of_week:
+                    is_all_day = not isinstance(start_time, datetime)
+                    time_str = "Ganztägig" if is_all_day else start_time.strftime('%H:%M')
+                    
+                    week_events[event_date].append({
+                        'summary': summary_str,
+                        'time': time_str,
+                        'is_all_day': is_all_day,
+                        'start_time': start_time # Für die Sortierung
+                    })
             except Exception as e:
                 print(f"Fehler beim Verarbeiten eines Termins: {e}")
 
-        events.sort(key=lambda e: e['start_time'])
-        
-        html_content = """
-        <!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Kalender</title>
-        <style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.6;background-color:#f4f4f9;color:#333;margin:0;padding:20px;}.container{max-width:800px;margin:auto;background:#fff;padding:20px;box-shadow:0 0 10px rgba(0,0,0,0.1);border-radius:8px;}h1{color:#444;border-bottom:2px solid #eee;padding-bottom:10px;}h2{margin-top:2em;}.event{border-left:5px solid #007bff;margin-bottom:15px;padding:10px 15px;background:#f9f9f9;}.event-date{font-weight:bold;font-size:1.1em;color:#0056b3;}.event-summary{font-size:1em;}.footer{text-align:center;margin-top:20px;font-size:0.8em;color:#777;}</style>
-        </head><body><div class="container"><h1>Kalender</h1>
+        # --- NEUES HTML: Wochenansicht als Tabelle/Grid ---
+        html_content = f"""
+        <!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Wochenkalender</title>
+        <style>
+            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f4f4f9; color: #333; margin: 0; padding: 20px; }}
+            .container {{ max-width: 1200px; margin: auto; background: #fff; padding: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.1); border-radius: 8px; }}
+            h1 {{ text-align: center; color: #333; }}
+            .week-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }}
+            .day-column {{ background-color: #fdfdfd; border: 1px solid #eee; border-radius: 5px; padding: 10px; }}
+            .day-header {{ text-align: center; font-weight: bold; padding-bottom: 10px; border-bottom: 2px solid #f0f0f0; margin-bottom: 10px; }}
+            .day-header .date {{ font-size: 0.9em; color: #666; font-weight: normal; }}
+            .event {{ border-left: 4px solid #007bff; margin-bottom: 8px; padding: 8px; background: #f9f9f9; border-radius: 3px; }}
+            .event.all-day {{ border-left-color: #28a745; }} /* Grüne Markierung für ganztägige Termine */
+            .event-time {{ font-weight: bold; font-size: 0.9em; color: #555; }}
+            .event-summary {{ font-size: 1em; }}
+            .no-events {{ color: #999; text-align: center; padding-top: 20px; }}
+            .footer {{ text-align: center; margin-top: 20px; font-size: 0.8em; color: #777; }}
+        </style>
+        </head><body><div class="container">
+        <h1>Arbeitswoche ({start_of_week.strftime('%d.%m')} - {end_of_week.strftime('%d.%m.%Y')})</h1>
+        <div class="week-grid">
         """
 
-        if not events:
-            html_content += "<p>Keine bevorstehenden Termine gefunden.</p>"
-        else:
-            current_month = ""
-            for event in events:
-                dt = event['start_time']
-                is_all_day = not isinstance(dt, datetime)
-                month_year = dt.strftime('%B %Y')
-                if month_year != current_month:
-                    html_content += f"<h2>{month_year}</h2>"
-                    current_month = month_year
-                if is_all_day:
-                    date_str = dt.strftime('%a, %d.%m.%Y')
-                    time_str = "Ganztägig"
-                else:
-                    date_str = dt.strftime('%H:%M Uhr')
-                summary_str = html.escape(str(event['summary']))
-                html_content += f"""
-                <div class="event"><div class="event-date">{date_str} &ndash; {time_str}</div><div class="event-summary">{summary_str}</div></div>
-                """
+        days_german = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]
+        
+        for i, day_name in enumerate(days_german):
+            current_date = start_of_week + timedelta(days=i)
+            events_for_day = week_events.get(current_date, [])
+            
+            # Termine sortieren: Ganztägige zuerst, dann nach Zeit
+            events_for_day.sort(key=lambda x: (not x['is_all_day'], x['start_time']))
 
-        html_content += f"""
-                <div class="footer">Kalender zuletzt aktualisiert am {datetime.now().strftime('%d.%m.%Y um %H:%M:%S Uhr')}</div>
-            </div></body></html>
+            html_content += f"""
+            <div class="day-column">
+                <div class="day-header">{day_name}<div class="date">{current_date.strftime('%d.%m.')}</div></div>
+            """
+            
+            if not events_for_day:
+                html_content += '<div class="no-events">-</div>'
+            else:
+                for event in events_for_day:
+                    event_class = "event all-day" if event['is_all_day'] else "event"
+                    html_content += f"""
+                    <div class="{event_class}">
+                        <div class="event-time">{event['time']}</div>
+                        <div class="event-summary">{event['summary']}</div>
+                    </div>
+                    """
+            html_content += "</div>" # Ende der .day-column
+
+        html_content += """
+        </div> <div class="footer">
+            Kalender zuletzt aktualisiert am {datetime.now().strftime('%d.%m.%Y um %H:%M:%S Uhr')}
+        </div>
+        </div></body></html>
         """
 
         with open(OUTPUT_HTML_FILE, 'w', encoding='utf-8') as f:
             f.write(html_content)
             
-        print(f"Fertig! Kalender wurde erfolgreich in '{OUTPUT_HTML_FILE}' erstellt.")
+        print(f"Fertig! Wochenkalender wurde erfolgreich in '{OUTPUT_HTML_FILE}' erstellt.")
 
     except requests.exceptions.RequestException as e:
         print(f"Fehler beim Herunterladen der ICS-Datei: {e}")
