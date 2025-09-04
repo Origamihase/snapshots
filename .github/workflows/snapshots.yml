@@ -2,7 +2,7 @@ name: Website Snapshots & Kalender
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # Zweimal pro Stunde (jede 30. Minute)
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -38,14 +38,14 @@ jobs:
           python-version: '3.11'
 
       - name: 3. Python-Abhängigkeiten installieren
-        # HIER IST DIE ÄNDERUNG: python-dateutil wurde hinzugefügt
         run: pip install requests icalendar python-dateutil
 
       - name: 4. Verzeichnisse vorbereiten und BASE_URL setzen
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p public/470-842-351 public/166-544-332 public/calendar public/health
+          # Das Verzeichnis für 'health' wird nicht mehr erstellt
+          mkdir -p public/470-842-351 public/166-544-332 public/calendar
           : > public/.nojekyll
           echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
           OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
@@ -59,8 +59,6 @@ jobs:
       - name: 5. Kalender-HTML erstellen
         run: python .github/workflows/erstelle_kalender.py
       
-      # ... der Rest der Datei bleibt unverändert ...
-
       - name: 6. Helfer-Skript für Snapshots erstellen
         shell: bash
         run: |
@@ -100,7 +98,7 @@ jobs:
           SH
           chmod +x safe_fetch.sh
 
-      - name: 7. Snapshot 470-842-351 aktualisieren
+      - name: 7. Snapshot 470-842-31 aktualisieren
         run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL" "$TS"
 
       - name: 8. Snapshot 166-544-332 aktualisieren
@@ -118,24 +116,16 @@ jobs:
             <li><a href="./470-842-351/">Snapshot 470-842-351</a></li>
             <li><a href="./166-544-332/">Snapshot 166-544-332</a></li>
             <li><a href="./calendar/">Kalender</a></li>
-            <li><a href="./health/">Health</a></li>
-          </ul>
+            </ul>
           HTML
+      
+      # Der Schritt zur Erstellung der Health-Seite wurde vollständig entfernt
 
-      - name: 10. Health-Seite erstellen
-        shell: bash
-        run: |
-          UTC="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-          LOCAL="$(TZ='Europe/Vienna' date +'%Y-%m-%d %H:%M:%S %Z')"
-          cat > public/health/index.html <<HTML
-          <!doctype html><html lang="de"><head><title>Health</title><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px} pre{background:#1b1b1b;padding:16px;border-radius:8px;overflow:auto} a{color:#7bd}</style></head><body><h1>Health</h1><pre>UTC   : ${UTC}\nVienna: ${LOCAL}</pre><p><a href="../">Zurueck</a></p></body></html>
-          HTML
-
-      - name: 11. Artefakt hochladen
+      - name: 10. Artefakt hochladen
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
 
-      - name: 12. Auf GitHub Pages deployen
+      - name: 11. Auf GitHub Pages deployen
         id: deployment
         uses: actions/deploy-pages@v4
