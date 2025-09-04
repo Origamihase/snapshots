@@ -1,8 +1,8 @@
-name: Website Snapshots
+name: Website Snapshots & Kalender
 
 on:
   schedule:
-    - cron: '*/30 * * * *'    # alle 30 Minuten (UTC)
+    - cron: '*/30 * * * *'  # Zweimal pro Stunde (jede 30. Minute)
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  cache-and-publish:
+  build-and-publish:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -23,47 +23,51 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     env:
-      PROJECT_NAME: "Website"  # <-- HIER ANPASSEN
+      PROJECT_NAME: "Website"
+      # Secrets für Snapshots
       URL_470: ${{ secrets.PHANTOMJS_URL_470 }}
       URL_166: ${{ secrets.PHANTOMJS_URL_166 }}
+      # Secret für Kalender
+      ICS_URL: ${{ secrets.ICS_CALENDAR_URL }}
 
     steps:
-      - name: Checkout
+      - name: 1. Repository auschecken
         uses: actions/checkout@v4
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+      - name: 2. Python-Umgebung einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Prepare output & env (lowercase BASE_URL)
+      - name: 3. Python-Abhängigkeiten installieren
+        run: pip install requests icalendar
+
+      - name: 4. Verzeichnisse vorbereiten und BASE_URL setzen
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p public public/470-842-351 public/166-544-332
+          # Verzeichnisse für alle Teile der Seite erstellen
+          mkdir -p public/470-842-351 public/166-544-332 public/calendar public/health
           : > public/.nojekyll
           echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
           OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          REPO_NAME="${GITHUB_REPOSITORY#*/}"
-          REPO_LOWER="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]')"
+          REPO_LOWER="$(echo "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
           if [ "${REPO_LOWER}" = "${OWNER_LOWER}.github.io" ]; then
             echo "BASE_URL=https://${OWNER_LOWER}.github.io" >> "$GITHUB_ENV"
           else
             echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_LOWER}" >> "$GITHUB_ENV"
           fi
 
-      - name: Validate required secrets
-        shell: bash
-        run: |
-          set -euo pipefail
-          : "${URL_470:?Secret PHANTOMJS_URL_470 ist nicht gesetzt oder leer. Bitte im Repository unter Settings → Secrets and variables → Actions anlegen.}"
-          : "${URL_166:?Secret PHANTOMJS_URL_166 ist nicht gesetzt oder leer. Bitte im Repository unter Settings → Secrets and variables → Actions anlegen.}"
-
-      - name: Helper (safe fetch & publish)
+      - name: 5. Kalender-HTML erstellen
+        run: python erstelle_kalender.py
+      
+      - name: 6. Helfer-Skript für Snapshots erstellen
         shell: bash
         run: |
           cat > safe_fetch.sh << 'SH'
           #!/usr/bin/env bash
           set -euo pipefail
-          ID="$1"; REMOTE="$2"; BASE="$3"; TS="$4"; P_NAME="$5"
+          ID="$1"; REMOTE="$2"; BASE="$3"; TS="$4"
           OUTDIR="public/${ID}"
           IMG="${OUTDIR}/image.png"
           TMP="${OUTDIR}/.new.png"
@@ -86,25 +90,23 @@ jobs:
           cat > "${OUTDIR}/index.html" <<HTML
           <!doctype html><html lang="de"><head>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>${P_NAME} | ${ID}</title>
+          <title>Snapshot ${ID}</title>
           <meta http-equiv="refresh" content="1800">
           <style>html,body{height:100%;margin:0;background:#000} img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
           </head><body>
-          <img src="image.png?v=${TS}" alt="${P_NAME} Snapshot ${ID}">
+          <img src="image.png?v=${TS}" alt="Snapshot ${ID}">
           </body></html>
           HTML
           SH
           chmod +x safe_fetch.sh
 
-      - name: Update 470-842-351
-        shell: bash
-        run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL" "$TS" "$PROJECT_NAME"
+      - name: 7. Snapshot 470-842-351 aktualisieren
+        run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL" "$TS"
 
-      - name: Update 166-544-332
-        shell: bash
-        run: ./safe_fetch.sh "166-544-332" "$URL_166" "$BASE_URL" "$TS" "$PROJECT_NAME"
+      - name: 8. Snapshot 166-544-332 aktualisieren
+        run: ./safe_fetch.sh "166-544-332" "$URL_166" "$BASE_URL" "$TS"
 
-      - name: Index page
+      - name: 9. Haupt-Indexseite erstellen
         shell: bash
         run: |
           cat > public/index.html << HTML
@@ -113,45 +115,27 @@ jobs:
           <style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee} a{color:#7bd} ul{line-height:1.8}</style>
           <h1>${PROJECT_NAME} Snapshots</h1>
           <ul>
-            <li><a href="./470-842-351/">470-842-351</a></li>
-            <li><a href="./166-544-332/">166-544-332</a></li>
+            <li><a href="./470-842-351/">Snapshot 470-842-351</a></li>
+            <li><a href="./166-544-332/">Snapshot 166-544-332</a></li>
+            <li><a href="./calendar/">Kalender</a></li>
             <li><a href="./health/">Health</a></li>
           </ul>
           HTML
 
-      - name: Health page (no-cache)
+      - name: 10. Health-Seite erstellen
         shell: bash
         run: |
-          mkdir -p public/health
           UTC="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-          LOCAL="$(TZ=Europe/Vienna date +'%Y-%m-%d %H:%M:%S %Z')"
+          LOCAL="$(TZ='Europe/Vienna' date +'%Y-%m-%d %H:%M:%S %Z')"
           cat > public/health/index.html <<HTML
-          <!doctype html>
-          <html lang="de"><head>
-          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Health</title>
-          <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
-          <meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">
-          <style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px} pre{background:#1b1b1b;padding:16px;border-radius:8px;overflow:auto} a{color:#7bd}</style>
-          </head><body>
-          <h1>Health</h1>
-          <pre>UTC   : ${UTC}
-          Vienna: ${LOCAL}</pre>
-          <p><a href="../">Zurueck</a></p>
-          </body></html>
+          <!doctype html><html lang="de"><head><title>Health</title><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"><style>body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0;padding:24px} pre{background:#1b1b1b;padding:16px;border-radius:8px;overflow:auto} a{color:#7bd}</style></head><body><h1>Health</h1><pre>UTC   : ${UTC}\nVienna: ${LOCAL}</pre><p><a href="../">Zurueck</a></p></body></html>
           HTML
 
-      - name: List files that will be deployed
-        shell: bash
-        run: |
-          echo "=== public tree ==="
-          find public -maxdepth 2 -type f -print | sort
-
-      - name: Upload static artifact
+      - name: 11. Artefakt hochladen
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
 
-      - name: Deploy to GitHub Pages
+      - name: 12. Auf GitHub Pages deployen
         id: deployment
         uses: actions/deploy-pages@v4
