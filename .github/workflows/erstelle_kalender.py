@@ -64,8 +64,8 @@ def create_calendar_html():
                                 week_events[current_date].append({
                                     'summary': summary_str,
                                     'time': time_str,
-                                    'is_all_day': is_all_day_event,
-                                    'start_time': start_dt
+                                'is_all_day': is_all_day_event,
+                                'start_time': start_dt
                                 })
                         current_date += timedelta(days=1)
 
@@ -84,7 +84,6 @@ def create_calendar_html():
         
         calendar_week = start_of_week_dt.isocalendar()[1]
         
-        # Nur noch die lokale Zeit für Wien wird ermittelt
         timestamp_vienna = datetime.now(ZoneInfo("Europe/Vienna")).strftime('%d.%m.%Y um %H:%M:%S Uhr')
 
         html_content = f"""
@@ -97,7 +96,7 @@ def create_calendar_html():
             }}
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 0; }}
             .top-bar {{ background-color: var(--main-green); padding: 15px 20px; color: var(--light-text-color); text-align: center; font-size: 1.8em; font-weight: bold; margin-bottom: 20px; }}
-            .container {{ max-width: 1200px; margin: 20px auto; background: var(--container-bg); padding: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.1); border-radius: 8px; }}
+            .container {{ max-width: 95%; /* ANGEPASST: Nutzt mehr Breite */ margin: 20px auto; background: var(--container-bg); padding: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.1); border-radius: 8px; }}
             .week-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }}
             .day-column {{ background-color: var(--header-bg); border: 1px solid var(--border-color); border-radius: 5px; padding: 10px; min-height: 150px; }}
             .day-header {{ text-align: center; font-weight: bold; padding-bottom: 10px; border-bottom: 2px solid var(--border-color); margin-bottom: 10px; }}
@@ -136,8 +135,6 @@ def create_calendar_html():
                     </div>
                     """
             html_content += "</div>"
-            
-        # Der Footer wurde auf das ursprüngliche, einfache Layout zurückgesetzt
         html_content += f"""
         </div>
         <div class="footer">
