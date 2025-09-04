@@ -2,11 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 Erstellt eine statische Wochenübersicht (Mo–Fr) als HTML aus einer ICS-Quelle.
+
 - Zielauflösung: 1920×1080 (Full-HD TV)
 - Reines HTML + CSS, kein JavaScript
-- Performance: ein eingebetteter CSS-Block, Systemschriften, keine Webfonts
-- Aktueller Tag wird optisch hervorgehoben (grüne Umrandung)
-- Fußzeile bleibt immer unten (Sticky-Footer via Flex-Layout)
+- Performance: ein eingebetteter CSS-Block, Systemschriften
+- Aktueller Tag: dezente grüne Umrandung
+- Fußzeile: steht immer am Seitenende (Sticky-Footer)
+- Branding: Kopfzeilen-Grün fest im Code hinterlegt (kein ENV)
+
 Voraussetzung: Environment-Variable ICS_URL mit der öffentlich erreichbaren ICS-Datei.
 Ausgabe: public/calendar/index.html
 """
@@ -74,10 +77,11 @@ def erstelle_kalender_html() -> None:
                 duration = dtend - dtstart
 
                 def add_event_to_week(start_dt: datetime, end_dt: datetime) -> None:
+                    """Fügt ein (ggf. mehrtägiges) Ereignis allen betroffenen Tagen in week_events hinzu."""
                     loop_end_date = end_dt.date()
                     is_all_day_event = (isinstance(component.get("dtstart").dt, date)
                                         and not isinstance(component.get("dtstart").dt, datetime))
-                    # ICS: DTEND ist exklusiv. Bei 00:00 und Dauer -> Vortag.
+                    # ICS: DTEND exklusiv – wenn 00:00 und mehrtägig, Tag davor ist letzter voller Tag
                     if end_dt.time() == time.min and duration.days > 0:
                         loop_end_date -= timedelta(days=1)
 
@@ -116,6 +120,7 @@ def erstelle_kalender_html() -> None:
         date_range_str = f"{fmt_short(monday_vie)}–{fmt_short(friday_vie)}"
 
         # ---------------- HTML (fixes 5-Spalten-Layout, TV-optimiert, Sticky-Footer) ----------------
+        # Hinweis: --brand und --brand2 sind identisch gesetzt => flächiges Grün wie im Referenz-Screenshot.
         html_parts: list[str] = []
         html_parts.append(f"""<!DOCTYPE html>
 <html lang="de">
@@ -132,9 +137,9 @@ def erstelle_kalender_html() -> None:
   --border: #e5e7eb;
   --radius: 12px;
 
-  --brand: #2f6f3a;
-  --brand2: #3f8b4c;
-  --accent: #4f9f5a;
+  --brand: #3f6f3a;      /* festes Kopfzeilen-Grün */
+  --brand2: #3f6f3a;     /* identisch -> kein sichtbarer Verlauf */
+  --accent: #4f9f5a;     /* dezentes Akzentgrün für Badges/Hervorhebung */
   --accent-soft: #eaf6ee;
 }}
 
@@ -145,8 +150,8 @@ body {{
   background: var(--bg);
   color: var(--text);
   font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-  display: flex;                 /* Sticky-Footer: */
-  flex-direction: column;        /* Footer bleibt unten */
+  display: flex;                 /* Sticky-Footer */
+  flex-direction: column;
   min-height: 100vh;
 }}
 
