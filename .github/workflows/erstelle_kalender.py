@@ -19,14 +19,101 @@ from __future__ import annotations
 import os
 import sys
 import html
+from typing import Any, Dict, List
+from datetime import datetime, date, time, timezone, timedelta
+
 import requests
 from icalendar import Calendar
-from zoneinfo import ZoneInfo
 from dateutil.rrule import rrulestr
-from datetime import datetime, date, time, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 OUTPUT_HTML_FILE = "public/calendar/index.html"
 
+
+# ----------------------------- Zeit-Helfer ---------------------------------- #
+
+def to_utc(dt_raw: date | datetime, tz_local: ZoneInfo) -> datetime:
+    """
+    Normalisiert ICS-Zeitwerte nach UTC.
+    - VALUE=DATE (reines Datum): als lokale Mitternacht interpretieren
+    - naive datetime: als lokale Zeit interpretieren
+    - timezone-aware datetime: nach UTC konvertieren
+    """
+    if isinstance(dt_raw, date) and not isinstance(dt_raw, datetime):
+        return datetime.combine(dt_raw, time.min, tzinfo=tz_local).astimezone(timezone.utc)
+    if getattr(dt_raw, "tzinfo", None):
+        return dt_raw.astimezone(timezone.utc)
+    return dt_raw.replace(tzinfo=tz_local).astimezone(timezone.utc)
+
+
+# ---------------------------- Rendering-Logik -------------------------------- #
+
+def add_event_to_week(
+    week_events: Dict[date, List[Dict[str, Any]]],
+    component: Any,
+    start_dt_utc: datetime,
+    end_dt_utc: datetime,
+    summary: str,
+    tz_vienna: ZoneInfo,
+    min_week_local: date,
+    max_week_local: date,
+) -> None:
+    """
+    Fügt ein (ggf. mehrtägiges) Ereignis den betroffenen Tagen in week_events hinzu.
+    week_events ist nach lokalen (Wien) Datumswerten indexiert.
+    """
+    start_local = start_dt_utc.astimezone(tz_vienna)
+    end_local = end_dt_utc.astimezone(tz_vienna)
+    duration = end_dt_utc - start_dt_utc
+
+    # All-Day erkennen (VALUE=DATE bei DTSTART)
+    is_all_day_event = (
+        isinstance(component.get("dtstart").dt, date)
+        and not isinstance(component.get("dtstart").dt, datetime)
+    )
+
+    # DTEND ist exklusiv -> bei 00:00 und Dauer > 0 letzten Tag um 1 zurück
+    loop_end_date = end_local.date()
+    if is_all_day_event:
+        loop_end_date -= timedelta(days=1)
+    elif end_local.time() == time.min and duration > timedelta(0):
+        loop_end_date -= timedelta(days=1)
+
+    same_day = (start_local.date() == end_local.date())
+    ends_midnight_next = (
+        end_local.time() == time.min
+        and duration > timedelta(0)
+        and end_local.date() > start_local.date()
+    )
+
+    current_date = start_local.date()
+    while current_date <= loop_end_date:
+        if min_week_local <= current_date <= max_week_local:
+            # Badge-Text bestimmen
+            if is_all_day_event:
+                time_str = "Ganztägig"
+            elif same_day:
+                time_str = f"{start_local:%H:%M}–{end_local:%H:%M}"
+            elif ends_midnight_next and current_date == start_local.date():
+                # z. B. 20:00–00:00 auf dem Starttag anzeigen
+                time_str = f"{start_local:%H:%M}–00:00"
+            elif current_date == start_local.date():
+                time_str = f"Start: {start_local:%H:%M}"
+            elif current_date == loop_end_date and end_local.time() > time.min:
+                time_str = f"Ende: {end_local:%H:%M}"
+            else:
+                time_str = "Ganztägig"
+
+            week_events[current_date].append({
+                "summary": summary,
+                "time": time_str,
+                "is_all_day": (time_str == "Ganztägig"),
+                "start_time": start_dt_utc,   # für Sortierung
+            })
+        current_date += timedelta(days=1)
+
+
+# --------------------------------- Main ------------------------------------- #
 
 def erstelle_kalender_html() -> None:
     """Liest die ICS-URL aus der Umgebung und schreibt die Wochenübersicht als HTML-Datei."""
@@ -40,99 +127,118 @@ def erstelle_kalender_html() -> None:
     try:
         response = requests.get(ics_url, timeout=30)
         response.raise_for_status()
-        cal = Calendar.from_ical(response.text)
+        cal = Calendar.from_ical(response.content)  # Bytes statt Text -> stabiler
+    except Exception as e:
+        print(f"Fehler beim Herunterladen/Parsen der ICS-Datei: {e}", file=sys.stderr)
+        sys.exit(2)
 
-        tz_vienna = ZoneInfo("Europe/Vienna")
-        now_vienna = datetime.now(tz_vienna)
-        today_utc = datetime.now(timezone.utc)
+    tz_vienna = ZoneInfo("Europe/Vienna")
+    now_vienna = datetime.now(tz_vienna)
 
-        # Wochenfenster (Montag 00:00:00 UTC bis Freitag 23:59:59 UTC)
-        start_of_week_dt = today_utc.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=today_utc.weekday())
-        end_of_week_dt = start_of_week_dt + timedelta(days=4, hours=23, minutes=59, seconds=59)
+    # Wochenfenster in Wiener Lokalzeit bestimmen
+    start_of_week_local = now_vienna.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=now_vienna.weekday())
+    end_of_week_local = start_of_week_local + timedelta(days=4, hours=23, minutes=59, seconds=59)
+    start_of_week_dt = start_of_week_local.astimezone(timezone.utc)
+    end_of_week_dt = end_of_week_local.astimezone(timezone.utc)
 
-        # Für Kopfzeile (Wiener Datum)
-        monday_vie = start_of_week_dt.astimezone(tz_vienna).date()
-        friday_vie = (start_of_week_dt + timedelta(days=4)).astimezone(tz_vienna).date()
+    monday_vie = start_of_week_local.date()
+    friday_vie = end_of_week_local.date()
 
-        # Sammlung für Mo–Fr (Keys sind UTC-Datum-Objekte)
-        week_events: dict[date, list[dict]] = {start_of_week_dt.date() + timedelta(days=i): [] for i in range(5)}
+    # week_events nach lokalem Datum (Wien) indexieren
+    week_events: Dict[date, List[Dict[str, Any]]] = {
+        (monday_vie + timedelta(days=i)): [] for i in range(5)
+    }
+    min_week_local = monday_vie
+    max_week_local = friday_vie
 
-        # Grenzen für die Woche (für schnellere Prüfungen in add_event_to_week)
-        min_week_date = start_of_week_dt.date()
-        max_week_date = min_week_date + timedelta(days=4)
+    # ------------------------------ ICS verarbeiten -------------------------- #
 
-        def add_event_to_week(component, start_dt: datetime, end_dt: datetime,
-                              summary: str, duration: timedelta) -> None:
-            """Fügt ein (ggf. mehrtägiges) Ereignis allen betroffenen Tagen in week_events hinzu."""
-            loop_end_date = end_dt.date()
-            is_all_day_event = (
-                isinstance(component.get("dtstart").dt, date)
-                and not isinstance(component.get("dtstart").dt, datetime)
+    for component in cal.walk("VEVENT"):
+        summary_raw = component.get("summary")
+        summary_str = html.escape(str(summary_raw) if summary_raw is not None else "Ohne Titel")
+
+        # DTSTART/DTEND normalisieren
+        dtstart_raw = component.get("dtstart").dt
+        dtend_prop = component.get("dtend")
+        dtend_raw = dtend_prop.dt if dtend_prop else dtstart_raw
+
+        dtstart = to_utc(dtstart_raw, tz_vienna)
+        dtend = to_utc(dtend_raw, tz_vienna)
+        duration = dtend - dtstart
+
+        # Wiederholungen (RRULE) + Ausnahmen (EXDATE)
+        rrule_prop = component.get("rrule")
+        if rrule_prop:
+            # EXDATE kann mehrfach vorkommen, Liste oder Einzelwert
+            exdates: set[datetime] = set()
+            ex_prop = component.get("exdate")
+            ex_list = ex_prop if isinstance(ex_prop, list) else ([ex_prop] if ex_prop else [])
+            for ex in ex_list:
+                for d in ex.dts:
+                    exdates.add(to_utc(d.dt, tz_vienna))
+
+            rrule = rrulestr(rrule_prop.to_ical().decode(), dtstart=dtstart)
+
+            # leicht erweitertes Suchfenster (Padding = Dauer), um Randtreffer mitzunehmen
+            pad = duration if duration > timedelta(0) else timedelta(0)
+            search_start = start_of_week_dt - pad
+            search_end = end_of_week_dt
+
+            for occ_start in rrule.between(search_start, search_end, inc=True):
+                if occ_start in exdates:
+                    continue
+                add_event_to_week(
+                    week_events,
+                    component,
+                    occ_start,
+                    occ_start + duration,
+                    summary_str,
+                    tz_vienna,
+                    min_week_local,
+                    max_week_local,
+                )
+        else:
+            # Einzeltermin
+            add_event_to_week(
+                week_events,
+                component,
+                dtstart,
+                dtend,
+                summary_str,
+                tz_vienna,
+                min_week_local,
+                max_week_local,
             )
-            # ICS: DTEND exklusiv – bei 00:00 und Dauer -> Vortag ist letzter voller Tag
-            if end_dt.time() == time.min and duration.days > 0:
-                loop_end_date -= timedelta(days=1)
 
-            current_date = start_dt.date()
-            while current_date <= loop_end_date:
-                if min_week_date <= current_date <= max_week_date:
-                    time_str = "Ganztägig" if is_all_day_event else start_dt.astimezone(tz_vienna).strftime("%H:%M")
-                    week_events[current_date].append({
-                        "summary": summary,
-                        "time": time_str,
-                        "is_all_day": is_all_day_event,
-                        "start_time": start_dt,
-                    })
-                current_date += timedelta(days=1)
+        # Zusätzliche Einzel-Vorkommen (RDATE)
+        rdate_prop = component.get("rdate")
+        rdate_list = rdate_prop if isinstance(rdate_prop, list) else ([rdate_prop] if rdate_prop else [])
+        for r in rdate_list:
+            for d in r.dts:
+                r_dt = to_utc(d.dt, tz_vienna)
+                add_event_to_week(
+                    week_events,
+                    component,
+                    r_dt,
+                    r_dt + duration,
+                    summary_str,
+                    tz_vienna,
+                    min_week_local,
+                    max_week_local,
+                )
 
-        # Termine verarbeiten
-        for component in cal.walk("VEVENT"):
-            summary_str = ""
-            try:
-                summary_str = html.escape(str(component.get("summary")))
-                dtstart_raw = component.get("dtstart").dt
-                dtend_prop = component.get("dtend")
-                dtend_raw = dtend_prop.dt if dtend_prop else dtstart_raw
+    # ----------------------------- HTML schreiben ---------------------------- #
 
-                # Normalisierung nach UTC (All-Day vs. Datetime)
-                if isinstance(dtstart_raw, date) and not isinstance(dtstart_raw, datetime):
-                    dtstart = datetime.combine(dtstart_raw, time.min, tzinfo=timezone.utc)
-                else:
-                    dtstart = dtstart_raw.astimezone(timezone.utc) if getattr(dtstart_raw, "tzinfo", None) else dtstart_raw.replace(tzinfo=timezone.utc)
+    calendar_week = start_of_week_local.isocalendar()[1]
+    timestamp_vienna = now_vienna.strftime("%d.%m.%Y um %H:%M:%S Uhr")
 
-                if isinstance(dtend_raw, date) and not isinstance(dtend_raw, datetime):
-                    dtend = datetime.combine(dtend_raw, time.min, tzinfo=timezone.utc)
-                else:
-                    dtend = dtend_raw.astimezone(timezone.utc) if getattr(dtend_raw, "tzinfo", None) else dtend_raw.replace(tzinfo=timezone.utc)
+    def fmt_short(d: date) -> str:
+        return d.strftime("%d.%m.")
 
-                duration = dtend - dtstart
+    date_range_str = f"{fmt_short(monday_vie)}–{fmt_short(friday_vie)}"
 
-                rrule_prop = component.get("rrule")
-                if rrule_prop:
-                    rrule = rrulestr(rrule_prop.to_ical().decode(), dtstart=dtstart)
-                    search_end_dt = end_of_week_dt + timedelta(days=duration.days)
-                    for occ_start in rrule.between(start_of_week_dt, search_end_dt, inc=True):
-                        add_event_to_week(component, occ_start, occ_start + duration, summary_str, duration)
-                else:
-                    add_event_to_week(component, dtstart, dtend, summary_str, duration)
-
-            except Exception as e:
-                print(f"Fehler beim Verarbeiten eines Termins ('{summary_str}'): {e}", file=sys.stderr)
-
-        # Meta für Kopfzeile und Footer
-        calendar_week = start_of_week_dt.isocalendar()[1]
-        timestamp_vienna = datetime.now(tz_vienna).strftime("%d.%m.%Y um %H:%M:%S Uhr")
-        days_german = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]
-        today_vie_date = now_vienna.date()
-
-        def fmt_short(d: date) -> str:
-            return d.strftime("%d.%m.")
-
-        date_range_str = f"{fmt_short(monday_vie)}–{fmt_short(friday_vie)}"
-
-        # ---------------- HTML (fixes 5-Spalten-Layout, TV-optimiert, Sticky-Footer) ----------------
-        html_parts: list[str] = []
-        html_parts.append(f"""<!DOCTYPE html>
+    html_parts: List[str] = []
+    html_parts.append(f"""<!DOCTYPE html>
 <html lang="de">
 <head>
 <meta charset="UTF-8">
@@ -252,60 +358,51 @@ footer.foot {{
   <section class="grid" aria-label="Wochentage">
 """)
 
-        for i, day_name in enumerate(["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]):
-            current_date_utc = start_of_week_dt.date() + timedelta(days=i)
-            current_date_vie = (start_of_week_dt + timedelta(days=i)).astimezone(tz_vienna).date()
-            events_for_day = week_events.get(current_date_utc, [])
-            # Sortierung: Ganztägig zuerst, dann Startzeit
-            events_for_day.sort(key=lambda x: (not x["is_all_day"], x["start_time"]))
-            is_today_cls = " today" if current_date_vie == today_vie_date else ""
+    day_names = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]
+    for i, day_name in enumerate(day_names):
+        current_date_local = monday_vie + timedelta(days=i)
+        events_for_day = week_events.get(current_date_local, [])
 
-            html_parts.append(f"""
-    <article class="day{is_today_cls}" aria-labelledby="d{i}-label">
-      <div class="day-header">
-        <div id="d{i}-label" class="day-name">{day_name}</div>
-        <div class="day-date">{current_date_vie.strftime('%d.%m.')}</div>
-      </div>
-      <div class="events">""")
+        # Sortierung: Ganztägig zuerst, dann Startzeit, dann Titel
+        events_for_day.sort(key=lambda x: (not x["is_all_day"], x["start_time"], x["summary"].lower()))
 
-            if not events_for_day:
-                html_parts.append('<div class="no-events">–</div>')
-            else:
-                for ev in events_for_day:
-                    badge_cls = "badge all" if ev["is_all_day"] else "badge"
-                    html_parts.append(f"""
-        <div class="event">
-          <div class="{badge_cls}">{ev['time']}</div>
-          <div class="summary">{ev['summary']}</div>
-        </div>""")
+        is_today_cls = " today" if current_date_local == now_vienna.date() else ""
 
-            html_parts.append("""
-      </div>
-    </article>""")
+        html_parts.append(
+            f'<article class="day{is_today_cls}" aria-labelledby="d{i}-label">'
+            f'<div class="day-header"><div id="d{i}-label" class="day-name">{day_name}</div>'
+            f'<div class="day-date">{current_date_local.strftime("%d.%m.")}</div></div>'
+            f'<div class="events">'
+        )
 
-        html_parts.append(f"""
-  </section>
+        if not events_for_day:
+            html_parts.append('<div class="no-events">–</div>')
+        else:
+            for ev in events_for_day:
+                badge_cls = "badge all" if ev["is_all_day"] else "badge"
+                html_parts.append(
+                    f'<div class="event"><div class="{badge_cls}">{ev["time"]}</div>'
+                    f'<div class="summary">{ev["summary"]}</div></div>'
+                )
+
+        html_parts.append("</div></article>")
+
+    html_parts.append(
+        f"""  </section>
 </main>
 
 <footer class="foot" role="contentinfo">
   Kalender zuletzt aktualisiert am {timestamp_vienna}
 </footer>
 </body>
-</html>
-""")
+</html>"""
+    )
 
-        os.makedirs(os.path.dirname(OUTPUT_HTML_FILE), exist_ok=True)
-        with open(OUTPUT_HTML_FILE, "w", encoding="utf-8") as f:
-            f.write("".join(html_parts))
+    os.makedirs(os.path.dirname(OUTPUT_HTML_FILE), exist_ok=True)
+    with open(OUTPUT_HTML_FILE, "w", encoding="utf-8") as f:
+        f.write("".join(html_parts))
 
-        print(f"Fertig! Wochenkalender wurde erfolgreich in '{OUTPUT_HTML_FILE}' erstellt.")
-
-    except requests.exceptions.RequestException as e:
-        print(f"Fehler beim Herunterladen der ICS-Datei: {e}", file=sys.stderr)
-        sys.exit(2)
-    except Exception as e:
-        print(f"Ein unerwarteter Fehler ist aufgetreten: {e}", file=sys.stderr)
-        sys.exit(3)
+    print(f"Fertig! Wochenkalender wurde erfolgreich in '{OUTPUT_HTML_FILE}' erstellt.")
 
 
 if __name__ == "__main__":
