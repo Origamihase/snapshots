@@ -6,6 +6,7 @@ Erstellt eine statische Wochenübersicht (Mo–Fr) als HTML aus einer ICS-Quelle
 - Reines HTML + CSS, kein JavaScript
 - Performance: ein eingebetteter CSS-Block, Systemschriften, keine Webfonts
 - Aktueller Tag wird optisch hervorgehoben (grüne Umrandung)
+- Fußzeile bleibt immer unten (Sticky-Footer via Flex-Layout)
 Voraussetzung: Environment-Variable ICS_URL mit der öffentlich erreichbaren ICS-Datei.
 Ausgabe: public/calendar/index.html
 """
@@ -32,7 +33,6 @@ def erstelle_kalender_html() -> None:
     print("Lade Kalender von der bereitgestellten URL...")
 
     try:
-        # robustes Timeout, kein Verify/Redirect-Tuning nötig
         response = requests.get(ics_url, timeout=30)
         response.raise_for_status()
         cal = Calendar.from_ical(response.text)
@@ -55,7 +55,6 @@ def erstelle_kalender_html() -> None:
         for component in cal.walk("VEVENT"):
             summary_str = ""
             try:
-                # Felder lesen
                 summary_str = html.escape(str(component.get("summary")))
                 dtstart_raw = component.get("dtstart").dt
                 dtend_prop = component.get("dtend")
@@ -75,12 +74,10 @@ def erstelle_kalender_html() -> None:
                 duration = dtend - dtstart
 
                 def add_event_to_week(start_dt: datetime, end_dt: datetime) -> None:
-                    """Fügt ein (ggf. mehrtägiges) Ereignis allen betroffenen Tagen in week_events hinzu."""
                     loop_end_date = end_dt.date()
                     is_all_day_event = (isinstance(component.get("dtstart").dt, date)
                                         and not isinstance(component.get("dtstart").dt, datetime))
-
-                    # ICS: DTEND ist exklusiv. Steht es auf 00:00 und gibt es eine Dauer, Tag davor verwenden.
+                    # ICS: DTEND ist exklusiv. Bei 00:00 und Dauer -> Vortag.
                     if end_dt.time() == time.min and duration.days > 0:
                         loop_end_date -= timedelta(days=1)
 
@@ -92,15 +89,13 @@ def erstelle_kalender_html() -> None:
                                 "summary": summary_str,
                                 "time": time_str,
                                 "is_all_day": is_all_day_event,
-                                "start_time": start_dt,  # Sortierschlüssel
+                                "start_time": start_dt,
                             })
                         current_date += timedelta(days=1)
 
-                # Wiederholungen
                 rrule_prop = component.get("rrule")
                 if rrule_prop:
                     rrule = rrulestr(rrule_prop.to_ical().decode(), dtstart=dtstart)
-                    # Suchende bis Ende der Woche + Dauerpuffer
                     search_end_dt = end_of_week_dt + timedelta(days=duration.days)
                     for occ_start in rrule.between(start_of_week_dt, search_end_dt, inc=True):
                         add_event_to_week(occ_start, occ_start + duration)
@@ -110,7 +105,6 @@ def erstelle_kalender_html() -> None:
             except Exception as e:
                 print(f"Fehler beim Verarbeiten eines Termins ('{summary_str}'): {e}", file=sys.stderr)
 
-        # Meta für Kopfzeile
         calendar_week = start_of_week_dt.isocalendar()[1]
         timestamp_vienna = datetime.now(tz_vienna).strftime("%d.%m.%Y um %H:%M:%S Uhr")
         days_german = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]
@@ -121,7 +115,7 @@ def erstelle_kalender_html() -> None:
 
         date_range_str = f"{fmt_short(monday_vie)}–{fmt_short(friday_vie)}"
 
-        # ---------------- HTML (fixes 5-Spalten-Layout, TV-optimiert) ----------------
+        # ---------------- HTML (fixes 5-Spalten-Layout, TV-optimiert, Sticky-Footer) ----------------
         html_parts: list[str] = []
         html_parts.append(f"""<!DOCTYPE html>
 <html lang="de">
@@ -151,6 +145,9 @@ body {{
   background: var(--bg);
   color: var(--text);
   font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  display: flex;                 /* Sticky-Footer: */
+  flex-direction: column;        /* Footer bleibt unten */
+  min-height: 100vh;
 }}
 
 header.topbar {{
@@ -169,10 +166,11 @@ header.topbar {{
 .title {{ font-weight: 700; font-size: 22px; letter-spacing: .2px; }}
 .sub {{ font-size: 13px; opacity: .95; }}
 
-.container {{ padding: 16px 20px 8px; }}
+main.container {{ padding: 16px 20px 8px; flex: 1; }}  /* füllt den verfügbaren Raum */
+
 .grid {{
   display: grid;
-  grid-template-columns: repeat(5, 1fr); /* genau 5 Spalten */
+  grid-template-columns: repeat(5, 1fr);
   gap: 12px;
 }}
 
@@ -216,7 +214,10 @@ header.topbar {{
 
 .no-events {{ color: var(--muted); text-align: center; padding: 18px 10px 22px; font-style: italic; }}
 
-footer.foot {{ color: #6b7280; font-size: 13px; text-align: center; padding: 6px 0 12px; }}
+footer.foot {{
+  color: #6b7280; font-size: 13px; text-align: center; padding: 6px 0 12px;
+  margin-top: auto;             /* garantiert: Fußzeile unten */
+}}
 </style>
 </head>
 <body>
@@ -236,12 +237,10 @@ footer.foot {{ color: #6b7280; font-size: 13px; text-align: center; padding: 6px
   <section class="grid" aria-label="Wochentage">
 """)
 
-        # Tage rendern (Mo–Fr)
-        for i, day_name in enumerate(days_german):
+        for i, day_name in enumerate(["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]):
             current_date_utc = start_of_week_dt.date() + timedelta(days=i)
             current_date_vie = (start_of_week_dt + timedelta(days=i)).astimezone(tz_vienna).date()
             events_for_day = week_events.get(current_date_utc, [])
-            # Sortierung: Ganztägig zuerst (True/False-Trick), dann nach Start
             events_for_day.sort(key=lambda x: (not x["is_all_day"], x["start_time"]))
             is_today_cls = " today" if current_date_vie == today_vie_date else ""
 
@@ -268,7 +267,6 @@ footer.foot {{ color: #6b7280; font-size: 13px; text-align: center; padding: 6px
       </div>
     </article>""")
 
-        # Abschluss
         html_parts.append(f"""
   </section>
 </main>
@@ -280,7 +278,6 @@ footer.foot {{ color: #6b7280; font-size: 13px; text-align: center; padding: 6px
 </html>
 """)
 
-        # Datei schreiben
         os.makedirs(os.path.dirname(OUTPUT_HTML_FILE), exist_ok=True)
         with open(OUTPUT_HTML_FILE, "w", encoding="utf-8") as f:
             f.write("".join(html_parts))
