@@ -24,25 +24,31 @@ from icalendar import Calendar
 from zoneinfo import ZoneInfo
 from dateutil.rrule import rrulestr
 from datetime import datetime, date, time, timedelta
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List
 
 OUTPUT_HTML_FILE = "public/calendar/index.html"
 
 
-# ----------------------------- Zeit-Helfer -----------------------------
+# ----------------------------- Hilfsfunktionen (Zeit) -----------------------------
 
 def to_local(dt_raw: date | datetime, tz_local: ZoneInfo) -> datetime:
-    """Normalisiert ICS-Daten nach lokaler Zeit (Europe/Vienna)."""
+    """
+    Normalisiert ICS-Zeitwerte nach lokaler Zeit.
+    - DATE (Ganztag): 00:00 lokale Zeit
+    - DATETIME mit/ohne tzinfo: in lokale Zeit umrechnen (naiv = lokal)
+    """
     if isinstance(dt_raw, date) and not isinstance(dt_raw, datetime):
         return datetime.combine(dt_raw, time.min, tzinfo=tz_local)
     if isinstance(dt_raw, datetime):
         if dt_raw.tzinfo is None:
             return dt_raw.replace(tzinfo=tz_local).astimezone(tz_local)
         return dt_raw.astimezone(tz_local)
+    # Fallback (sollte nicht passieren)
     return datetime.now(tz_local)
 
 
 def is_all_day_component(component) -> bool:
+    """Erkennt All-Day-Events am dtstart-Typ."""
     dtstart = component.get("dtstart")
     if not dtstart:
         return False
@@ -50,7 +56,7 @@ def is_all_day_component(component) -> bool:
     return isinstance(v, date) and not isinstance(v, datetime)
 
 
-# ----------------------- Event in Wochenstruktur schreiben -----------------------
+# -------------------------- Termin in Wochenstruktur schreiben --------------------------
 
 def add_event_local(
     week_events: Dict[date, List[Dict[str, Any]]],
@@ -58,18 +64,21 @@ def add_event_local(
     start_local: datetime,
     end_local: datetime,
     summary: str,
-    week_days_local: Set[date],
+    location: str,
+    week_days_local: set[date],
 ) -> None:
-    """Fügt ein (ggf. mehrtägiges) Ereignis pro betroffenen Tag ein."""
+    """Fügt ein (ggf. mehrtägiges) Ereignis allen betroffenen lokalen Tagen hinzu."""
     all_day = is_all_day_component(component)
 
-    # DTEND exklusiv: 00:00 + Dauer > 0 -> letzter voller Tag ist der Vortag
+    # DTEND ist exklusiv: wenn 00:00 und Dauer > 0, gilt der Vortag als letzter voller Tag
     loop_end_date = end_local.date()
     if (all_day or end_local.time() == time.min) and end_local > start_local:
         loop_end_date -= timedelta(days=1)
 
     same_day = (start_local.date() == end_local.date())
-    ends_midnight_next = (end_local.time() == time.min and end_local.date() > start_local.date())
+    ends_midnight_next = (
+        end_local.time() == time.min and end_local.date() > start_local.date()
+    )
 
     current = start_local.date()
     while current <= loop_end_date:
@@ -81,6 +90,7 @@ def add_event_local(
                 if same_day:
                     time_str = f"{start_local:%H:%M}–{end_local:%H:%M}"
                 elif ends_midnight_next and current == start_local.date():
+                    # 24h-Block: 00:00–00:00 → Ganztägig
                     time_str = "Ganztägig" if start_local.time() == time.min else f"{start_local:%H:%M}–00:00"
                 elif current == start_local.date():
                     time_str = f"Start: {start_local:%H:%M}"
@@ -92,14 +102,15 @@ def add_event_local(
 
             week_events[current].append({
                 "summary": summary,
+                "location": location,
                 "time": time_str,
                 "is_all_day": is_all,
-                "start_time": start_local,
+                "start_time": start_local,  # für Sortierung
             })
         current += timedelta(days=1)
 
 
-# ------------------------------- HTML-Rendering -------------------------------
+# ------------------------------------ HTML rendern -------------------------------------
 
 def render_html(
     week_events: Dict[date, List[Dict[str, Any]]],
@@ -108,14 +119,15 @@ def render_html(
     now_local_dt: datetime,
 ) -> str:
     calendar_week = now_local_dt.isocalendar()[1]
-    tz_vienna = now_local_dt.tzinfo  # type: ignore
-    timestamp_vienna = datetime.now(tz_vienna).strftime("%d.%m.%Y um %H:%M:%S Uhr")  # type: ignore
+    tz_local = now_local_dt.tzinfo  # type: ignore
+    timestamp_local = datetime.now(tz_local).strftime("%d.%m.%Y um %H:%M:%S Uhr")
 
     def fmt_short(d: date) -> str:
         return d.strftime("%d.%m.")
 
     date_range_str = f"{fmt_short(monday_local)}–{fmt_short(friday_local)}"
     today_local_date = now_local_dt.date()
+
     days = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]
 
     parts: List[str] = []
@@ -133,40 +145,93 @@ def render_html(
   --muted: #6b7280;
   --border: #e5e7eb;
   --radius: 12px;
-  --brand: #3f6f3a; --brand2: #3f6f3a;
-  --accent: #4f9f5a; --accent-soft: #eaf6ee;
+
+  --brand: #3f6f3a;      /* Kopfzeilen-Grün */
+  --brand2: #3f6f3a;
+  --accent: #4f9f5a;     /* Badges/Hervorhebung */
+  --accent-soft: #eaf6ee;
 }}
+
 * {{ box-sizing: border-box; }}
 html, body {{ height: 100%; }}
-body {{ margin:0; background:var(--bg); color:var(--text);
-       font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;
-       display:flex; flex-direction:column; min-height:100vh; }}
-header.topbar {{ background:linear-gradient(135deg,var(--brand),var(--brand2)); color:#fff; padding:12px 20px; }}
-.topbar-inner {{ display:flex; align-items:center; gap:14px; }}
-.logo {{ background:#fff; border-radius:10px; padding:6px; display:flex; align-items:center; justify-content:center; }}
-.logo img {{ width:28px; height:28px; display:block; }}
-.title {{ font-weight:700; font-size:22px; letter-spacing:.2px; }}
-.sub {{ font-size:13px; opacity:.95; }}
-main.container {{ padding:16px 20px 8px; flex:1; }}
-.grid {{ display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }}
-.day {{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
-       box-shadow:0 6px 18px rgba(0,0,0,.06); min-height:160px; display:flex; flex-direction:column; }}
-.day-header {{ padding:10px 12px; border-bottom:1px solid var(--border);
-              display:flex; align-items:baseline; justify-content:space-between;
-              background:linear-gradient(180deg,rgba(0,0,0,.02),transparent); }}
-.day-name {{ font-weight:700; }}
-.day-date {{ color:var(--muted); font-size:13px; }}
-.day.today {{ border-color:rgba(79,159,90,.55); box-shadow:0 0 0 3px rgba(79,159,90,.14),0 6px 18px rgba(0,0,0,.06); }}
-.day.today .day-header {{ background:linear-gradient(180deg,var(--accent-soft),transparent);
-                         border-bottom-color:rgba(79,159,90,.35); }}
-.events {{ padding:10px 12px 12px; display:grid; gap:10px; }}
-.event {{ display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; }}
-.badge {{ font-weight:700; font-size:12px; padding:4px 8px; border-radius:999px;
-         border:1px solid rgba(79,159,90,.35); background:var(--accent-soft); white-space:nowrap; }}
-.badge.all {{ border-style:dashed; }}
-.summary {{ font-size:15px; line-height:1.35; }}
-.no-events {{ color:var(--muted); text-align:center; padding:18px 10px 22px; font-style:italic; }}
-footer.foot {{ color:#6b7280; font-size:13px; text-align:center; padding:6px 0 12px; margin-top:auto; }}
+body {{
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}}
+
+header.topbar {{
+  background: linear-gradient(135deg, var(--brand), var(--brand2));
+  color: #fff;
+  padding: 12px 20px;
+}}
+.topbar-inner {{ display: flex; align-items: center; gap: 14px; }}
+.logo {{
+  background: #fff;
+  border-radius: 10px;
+  padding: 6px;
+  display: flex; align-items: center; justify-content: center;
+}}
+.logo img {{ width: 28px; height: 28px; display: block; }}
+.title {{ font-weight: 700; font-size: 22px; letter-spacing: .2px; }}
+.sub {{ font-size: 13px; opacity: .95; }}
+
+main.container {{ padding: 16px 20px 8px; flex: 1; }}
+
+.grid {{
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}}
+
+.day {{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0,0,0,.06);
+  min-height: 160px;
+  display: flex; flex-direction: column;
+}}
+.day-header {{
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; justify-content: space-between;
+  background: linear-gradient(180deg, rgba(0,0,0,.02), transparent);
+}}
+.day-name {{ font-weight: 700; }}
+.day-date {{ color: var(--muted); font-size: 13px; }}
+
+.day.today {{
+  border-color: rgba(79,159,90,.55);
+  box-shadow: 0 0 0 3px rgba(79,159,90,.14), 0 6px 18px rgba(0,0,0,.06);
+}}
+.day.today .day-header {{
+  background: linear-gradient(180deg, var(--accent-soft), transparent);
+  border-bottom-color: rgba(79,159,90,.35);
+}}
+
+.events {{ padding: 10px 12px 12px; display: grid; gap: 10px; }}
+.event {{ display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; }}
+
+.badge {{
+  font-weight: 700; font-size: 12px; padding: 4px 8px; border-radius: 999px;
+  border: 1px solid rgba(79,159,90,.35); background: var(--accent-soft);
+  white-space: nowrap;
+}}
+.badge.all {{ border-style: dashed; }}
+.summary {{ font-size: 15px; line-height: 1.35; }}
+.summary .meta {{ font-size: 12px; color: var(--muted); margin-top: 2px; }}
+
+.no-events {{ color: var(--muted); text-align: center; padding: 18px 10px 22px; font-style: italic; }}
+
+footer.foot {{
+  color: #6b7280; font-size: 13px; text-align: center; padding: 6px 0 12px;
+  margin-top: auto;
+}}
 </style>
 </head>
 <body>
@@ -181,32 +246,42 @@ footer.foot {{ color:#6b7280; font-size:13px; text-align:center; padding:6px 0 1
     </div>
   </div>
 </header>
+
 <main class="container" role="main">
   <section class="grid" aria-label="Wochentage">""")
 
     for i, day_name in enumerate(days):
         current_date = monday_local + timedelta(days=i)
         events = week_events.get(current_date, [])
+        # Ganztägig zuerst, dann Startzeit, dann Titel
         events.sort(key=lambda x: (not x["is_all_day"], x["start_time"], x["summary"].lower()))
         is_today_cls = " today" if current_date == today_local_date else ""
+
         parts.append(
             f'<article class="day{is_today_cls}" aria-labelledby="d{i}-label">'
             f'<div class="day-header"><div id="d{i}-label" class="day-name">{day_name}</div>'
             f'<div class="day-date">{current_date.strftime("%d.%m.")}</div></div>'
             f'<div class="events">'
         )
+
         if not events:
             parts.append('<div class="no-events">–</div>')
         else:
             for ev in events:
                 badge_cls = "badge all" if ev["is_all_day"] else "badge"
+                loc_html = ""
+                if ev.get("location"):
+                    loc_html = f'<div class="meta">{html.escape(ev["location"])}</div>'
                 parts.append(
                     f'<div class="event"><div class="{badge_cls}">{ev["time"]}</div>'
-                    f'<div class="summary">{ev["summary"]}</div></div>'
+                    f'<div class="summary">{ev["summary"]}{loc_html}</div></div>'
                 )
+
         parts.append("</div></article>")
 
-    parts.append(f"</section></main><footer class=\"foot\" role=\"contentinfo\">Kalender zuletzt aktualisiert am {timestamp_vienna}</footer></body></html>")
+    parts.append(
+        f'</section></main><footer class="foot" role="contentinfo">Kalender zuletzt aktualisiert am {timestamp_local}</footer></body></html>'
+    )
     return "".join(parts)
 
 
@@ -221,9 +296,10 @@ def erstelle_kalender_html() -> None:
     print("Lade Kalender von der bereitgestellten URL...")
 
     try:
+        # WICHTIG: Bytes, nicht .text
         response = requests.get(ics_url, timeout=30)
         response.raise_for_status()
-        cal = Calendar.from_ical(response.content)  # Bytes, nicht .text
+        cal = Calendar.from_ical(response.content)
     except Exception as e:
         print(f"Fehler beim Herunterladen/Parsen der ICS-Datei: {e}", file=sys.stderr)
         sys.exit(2)
@@ -238,22 +314,28 @@ def erstelle_kalender_html() -> None:
     monday_local = start_of_week_local_dt.date()
     friday_local = (start_of_week_local_dt + timedelta(days=4)).date()
 
-    # Zielstruktur
-    week_days_local: Set[date] = {monday_local + timedelta(days=i) for i in range(5)}
+    # Zielstruktur (lokale Kalendertage)
+    week_days_local = {monday_local + timedelta(days=i) for i in range(5)}
     week_events: Dict[date, List[Dict[str, Any]]] = {d: [] for d in week_days_local}
 
-    # Globale Dedupe-Menge: (UID, occurrence_start_local_iso)
-    seen_occurrences: Set[Tuple[str, str]] = set()
+    # De-Duping über (UID oder summary|location, Startzeit lokal)
+    dedup_keys: set[tuple[str, str]] = set()
+
+    def add_occurrence(component, occ_start_local: datetime, occ_end_local: datetime, summary_str: str) -> None:
+        uid = str(component.get("uid") or "").strip()
+        location_str = str(component.get("location") or "").strip()
+        key_id = uid or f"{summary_str}|{location_str}"
+        key = (key_id, occ_start_local.isoformat())
+        if key in dedup_keys:
+            return
+        dedup_keys.add(key)
+        add_event_local(week_events, component, occ_start_local, occ_end_local, summary_str, location_str, week_days_local)
 
     for component in cal.walk("VEVENT"):
-        # Abgesagte Events optional ignorieren
-        if str(component.get("status", "")).upper() == "CANCELLED":
-            continue
-
         summary_str = ""
         try:
+            # Titel + Ort
             summary_str = html.escape(str(component.get("summary") or "Ohne Titel"))
-            uid = str(component.get("uid") or "")
 
             # Start/Ende (lokal)
             dtstart_raw = component.get("dtstart").dt
@@ -268,22 +350,15 @@ def erstelle_kalender_html() -> None:
                 dtend_raw = dtend_prop.dt if dtend_prop else dtstart_raw
                 end_local = to_local(dtend_raw, tz_vienna)
 
+            # Dauer (für Suchfenster-Puffer)
             duration = end_local - start_local
             pad = duration if duration > timedelta(0) else timedelta(0)
-
-            # Helper: fügt eine Vorkommnis nur einmal hinzu
-            def add_occurrence(occ_start: datetime) -> None:
-                key = (uid or f"{summary_str}", occ_start.isoformat())
-                if key in seen_occurrences:
-                    return
-                seen_occurrences.add(key)
-                add_event_local(week_events, component, occ_start, occ_start + duration, summary_str, week_days_local)
 
             # Wiederholungen (RRULE)
             rrule_prop = component.get("rrule")
             if rrule_prop:
                 # EXDATE sammeln
-                exdates_local: Set[datetime] = set()
+                exdates_local: set[datetime] = set()
                 ex_prop = component.get("exdate")
                 ex_list = ex_prop if isinstance(ex_prop, list) else ([ex_prop] if ex_prop else [])
                 for ex in ex_list:
@@ -291,30 +366,30 @@ def erstelle_kalender_html() -> None:
                         exdates_local.add(to_local(d.dt, tz_vienna))
 
                 rule = rrulestr(rrule_prop.to_ical().decode(), dtstart=start_local)
-
+                # leicht nach vorne ziehen, damit Events, die am Sonntag 24h laufen, montags erscheinen
                 search_start = start_of_week_local_dt - pad
                 search_end = end_of_week_local_dt
 
                 for occ_start_local in rule.between(search_start, search_end, inc=True):
                     if occ_start_local in exdates_local:
                         continue
-                    add_occurrence(occ_start_local)
+                    add_occurrence(component, occ_start_local, occ_start_local + duration, summary_str)
             else:
                 # Einzeltermin
-                add_occurrence(start_local)
+                add_occurrence(component, start_local, end_local, summary_str)
 
-            # RDATE (zusätzliche Einzeltermine)
+            # Zusätzliche Einzeltermine (RDATE)
             rdate_prop = component.get("rdate")
             rdate_list = rdate_prop if isinstance(rdate_prop, list) else ([rdate_prop] if rdate_prop else [])
             for r in rdate_list:
                 for d in r.dts:
                     r_local = to_local(d.dt, tz_vienna)
-                    add_occurrence(r_local)
+                    add_occurrence(component, r_local, r_local + duration, summary_str)
 
         except Exception as e:
             print(f"Fehler beim Verarbeiten eines Termins ('{summary_str}'): {e}", file=sys.stderr)
 
-    # HTML schreiben
+    # HTML erzeugen & schreiben
     html_str = render_html(week_events, monday_local, friday_local, now_local)
     os.makedirs(os.path.dirname(OUTPUT_HTML_FILE), exist_ok=True)
     with open(OUTPUT_HTML_FILE, "w", encoding="utf-8") as f:
