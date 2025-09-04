@@ -24,7 +24,8 @@ from icalendar import Calendar
 from zoneinfo import ZoneInfo
 from dateutil.rrule import rrulestr
 from datetime import datetime, date, time, timedelta
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set
+
 
 OUTPUT_HTML_FILE = "public/calendar/index.html"
 
@@ -34,17 +35,16 @@ OUTPUT_HTML_FILE = "public/calendar/index.html"
 def to_local(dt_raw: date | datetime, tz_local: ZoneInfo) -> datetime:
     """
     Normalisiert ICS-Zeitwerte nach lokaler Zeit.
-    - VALUE=DATE (Ganztägig): 00:00 lokale Zeit
+    - DATE (Ganztag): 00:00 lokale Zeit
     - DATETIME mit/ohne tzinfo: in lokale Zeit umrechnen (naiv = lokal)
     """
     if isinstance(dt_raw, date) and not isinstance(dt_raw, datetime):
         return datetime.combine(dt_raw, time.min, tzinfo=tz_local)
-    # vDatetime o.ä.
     if isinstance(dt_raw, datetime):
         if dt_raw.tzinfo is None:
             return dt_raw.replace(tzinfo=tz_local).astimezone(tz_local)
         return dt_raw.astimezone(tz_local)
-    # Fallback (sollte nicht auftreten)
+    # Fallback (sollte praktisch nie passieren)
     return datetime.now(tz_local)
 
 
@@ -57,11 +57,10 @@ def is_all_day_component(component) -> bool:
     return isinstance(v, date) and not isinstance(v, datetime)
 
 
-# ---------------------- Termin in Wochenstruktur schreiben ----------------------
+# -------------------------- Termin in Wochenstruktur schreiben --------------------------
 
 def add_event_local(
     week_events: Dict[date, List[Dict[str, Any]]],
-    seen_per_day: Dict[date, Set[Tuple[str, str]]],
     component,
     start_local: datetime,
     end_local: datetime,
@@ -71,7 +70,7 @@ def add_event_local(
     """Fügt ein (ggf. mehrtägiges) Ereignis allen betroffenen lokalen Tagen hinzu."""
     all_day = is_all_day_component(component)
 
-    # DTEND ist exklusiv: wenn 00:00 und Dauer > 0, gilt der Vortag als letzter voller Tag.
+    # DTEND ist exklusiv: wenn 00:00 und Ende > Start, gilt der Vortag als letzter voller Tag
     loop_end_date = end_local.date()
     if (all_day or end_local.time() == time.min) and end_local > start_local:
         loop_end_date -= timedelta(days=1)
@@ -82,7 +81,6 @@ def add_event_local(
     current = start_local.date()
     while current <= loop_end_date:
         if current in week_days_local:
-            # Zeit-Badge-Logik (dezent & stabil)
             if all_day:
                 time_str = "Ganztägig"
                 is_all = True
@@ -90,26 +88,22 @@ def add_event_local(
                 if same_day:
                     time_str = f"{start_local:%H:%M}–{end_local:%H:%M}"
                 elif ends_midnight_next and current == start_local.date():
-                    # 24h-Block 00:00–00:00 → Ganztägig anzeigen
+                    # 24h-Block: 00:00–00:00 → Ganztägig
                     time_str = "Ganztägig" if start_local.time() == time.min else f"{start_local:%H:%M}–00:00"
                 elif current == start_local.date():
-                    time_str = f"{start_local:%H:%M}"
+                    time_str = f"Start: {start_local:%H:%M}"
                 elif current == loop_end_date and end_local.time() > time.min:
-                    time_str = f"bis {end_local:%H:%M}"
+                    time_str = f"Ende: {end_local:%H:%M}"
                 else:
                     time_str = "Ganztägig"
                 is_all = (time_str == "Ganztägig")
 
-            # Deduplizieren pro Tag (Zeit-Badge + Titel)
-            key = (time_str, summary.lower())
-            if key not in seen_per_day[current]:
-                week_events[current].append({
-                    "summary": summary,
-                    "time": time_str,
-                    "is_all_day": is_all,
-                    "start_time": start_local,  # für Sortierung
-                })
-                seen_per_day[current].add(key)
+            week_events[current].append({
+                "summary": summary,
+                "time": time_str,
+                "is_all_day": is_all,
+                "start_time": start_local,  # für Sortierung
+            })
         current += timedelta(days=1)
 
 
@@ -123,7 +117,7 @@ def render_html(
 ) -> str:
     calendar_week = now_local_dt.isocalendar()[1]
     tz_vienna = now_local_dt.tzinfo  # type: ignore
-    timestamp_vienna = datetime.now(tz_vienna).strftime("%d.%m.%Y um %H:%M:%S Uhr")
+    timestamp_vienna = datetime.now(tz_vienna).strftime("%d.%m.%Y um %H:%M:%S Uhr")  # type: ignore
 
     def fmt_short(d: date) -> str:
         return d.strftime("%d.%m.")
@@ -255,7 +249,7 @@ footer.foot {{
     for i, day_name in enumerate(days):
         current_date = monday_local + timedelta(days=i)
         events = week_events.get(current_date, [])
-        # Sortierung: Ganztägig zuerst, dann Startzeit, dann Titel
+        # Ganztägig zuerst, dann Startzeit, dann Titel
         events.sort(key=lambda x: (not x["is_all_day"], x["start_time"], x["summary"].lower()))
         is_today_cls = " today" if current_date == today_local_date else ""
 
@@ -295,7 +289,7 @@ def erstelle_kalender_html() -> None:
     print("Lade Kalender von der bereitgestellten URL...")
 
     try:
-        # WICHTIG: Bytes verwenden
+        # WICHTIG: Bytes, nicht .text
         response = requests.get(ics_url, timeout=30)
         response.raise_for_status()
         cal = Calendar.from_ical(response.content)
@@ -316,22 +310,32 @@ def erstelle_kalender_html() -> None:
     # Zielstruktur (lokale Kalendertage)
     week_days_local: Set[date] = {monday_local + timedelta(days=i) for i in range(5)}
     week_events: Dict[date, List[Dict[str, Any]]] = {d: [] for d in week_days_local}
-    seen_per_day: Dict[date, Set[Tuple[str, str]]] = {d: set() for d in week_days_local}
 
-    def add(component, s_local: datetime, e_local: datetime, summary: str):
-        add_event_local(week_events, seen_per_day, component, s_local, e_local, summary, week_days_local)
-
+    # --------- RECURRENCE-ID Overrides sammeln (pro UID) ---------
+    overrides: Dict[str, Dict[datetime, Any]] = {}
     for component in cal.walk("VEVENT"):
+        uid = str(component.get("uid") or "")
+        rid_prop = component.get("recurrence-id")
+        if uid and rid_prop:
+            rid_local = to_local(rid_prop.dt, tz_vienna)
+            overrides.setdefault(uid, {})[rid_local] = component
+
+    # -------------------- Events verarbeiten ---------------------
+    for component in cal.walk("VEVENT"):
+        # Skip reine Overrides hier (wurden oben gesammelt)
+        if component.get("recurrence-id"):
+            continue
+
+        # Abgesagte gesamte Serie ignorieren
+        if str(component.get("status", "")).upper() == "CANCELLED":
+            continue
+
         summary_str = ""
         try:
-            # Unerwünschte Organizer optional ausblenden
-            if "Ehemaliger Benutzer (Deleted)" in str(component.get("organizer", "")):
-                continue
-
             # Titel
             summary_str = html.escape(str(component.get("summary") or "Ohne Titel"))
 
-            # Start/Ende (lokal)
+            # Start/Ende (lokal) des Master-Events
             dtstart_raw = component.get("dtstart").dt
             start_local = to_local(dtstart_raw, tz_vienna)
 
@@ -344,14 +348,13 @@ def erstelle_kalender_html() -> None:
                 dtend_raw = dtend_prop.dt if dtend_prop else dtstart_raw
                 end_local = to_local(dtend_raw, tz_vienna)
 
-            # Dauer (für Suchfenster-Puffer)
-            duration = end_local - start_local
-            pad = duration if duration > timedelta(0) else timedelta(0)
+            base_duration = end_local - start_local
+            pad = base_duration if base_duration > timedelta(0) else timedelta(0)
 
-            # Wiederholungen (RRULE)
+            # Wiederholungen (RRULE) expandieren
             rrule_prop = component.get("rrule")
             if rrule_prop:
-                # EXDATE sammeln
+                # EXDATE sammeln (lokal)
                 exdates_local: Set[datetime] = set()
                 ex_prop = component.get("exdate")
                 ex_list = ex_prop if isinstance(ex_prop, list) else ([ex_prop] if ex_prop else [])
@@ -360,16 +363,46 @@ def erstelle_kalender_html() -> None:
                         exdates_local.add(to_local(d.dt, tz_vienna))
 
                 rule = rrulestr(rrule_prop.to_ical().decode(), dtstart=start_local)
+
+                # Suchfenster: Puffer nach vorne, damit Vorkommen mit Start < Mo aber Laufzeit in Woche auftauchen
                 search_start = start_of_week_local_dt - pad
                 search_end = end_of_week_local_dt
+
+                uid = str(component.get("uid") or "")
 
                 for occ_start_local in rule.between(search_start, search_end, inc=True):
                     if occ_start_local in exdates_local:
                         continue
-                    add(component, occ_start_local, occ_start_local + duration, summary_str)
+
+                    # Override suchen (per RECURRENCE-ID == Original-Start)
+                    eff_component = overrides.get(uid, {}).get(occ_start_local, component)
+
+                    # Abgesagtes Einzelvorkommen überspringen
+                    if str(eff_component.get("status", "")).upper() == "CANCELLED":
+                        continue
+
+                    # Effektive Start-/Endzeit für dieses Vorkommen
+                    eff_dtstart_raw = eff_component.get("dtstart").dt
+                    eff_start_local = to_local(eff_dtstart_raw, tz_vienna)
+
+                    eff_dtend_prop = eff_component.get("dtend")
+                    eff_duration_prop = eff_component.get("duration")
+
+                    if eff_dtend_prop:
+                        eff_end_local = to_local(eff_dtend_prop.dt, tz_vienna)
+                    elif eff_duration_prop:
+                        eff_end_local = eff_start_local + eff_duration_prop.dt
+                    else:
+                        # Falls Override keine Dauer/kein Ende hat → Dauer aus Master
+                        eff_end_local = eff_start_local + base_duration
+
+                    # Zusammenfassung ggf. überschrieben
+                    eff_summary = html.escape(str(eff_component.get("summary") or summary_str))
+
+                    add_event_local(week_events, eff_component, eff_start_local, eff_end_local, eff_summary, week_days_local)
             else:
                 # Einzeltermin
-                add(component, start_local, end_local, summary_str)
+                add_event_local(week_events, component, start_local, end_local, summary_str, week_days_local)
 
             # Zusätzliche Einzeltermine (RDATE)
             rdate_prop = component.get("rdate")
@@ -377,7 +410,7 @@ def erstelle_kalender_html() -> None:
             for r in rdate_list:
                 for d in r.dts:
                     r_local = to_local(d.dt, tz_vienna)
-                    add(component, r_local, r_local + duration, summary_str)
+                    add_event_local(week_events, component, r_local, r_local + base_duration, summary_str, week_days_local)
 
         except Exception as e:
             print(f"Fehler beim Verarbeiten eines Termins ('{summary_str}'): {e}", file=sys.stderr)
