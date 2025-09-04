@@ -24,7 +24,7 @@ from icalendar import Calendar
 from zoneinfo import ZoneInfo
 from dateutil.rrule import rrulestr
 from datetime import datetime, date, time, timedelta
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Set, Tuple
 
 OUTPUT_HTML_FILE = "public/calendar/index.html"
 
@@ -242,7 +242,9 @@ def erstelle_kalender_html() -> None:
     week_days_local: Set[date] = {monday_local + timedelta(days=i) for i in range(5)}
     week_events: Dict[date, List[Dict[str, Any]]] = {d: [] for d in week_days_local}
 
-    # Verarbeitung
+    # Globale Dedupe-Menge: (UID, occurrence_start_local_iso)
+    seen_occurrences: Set[Tuple[str, str]] = set()
+
     for component in cal.walk("VEVENT"):
         # Abgesagte Events optional ignorieren
         if str(component.get("status", "")).upper() == "CANCELLED":
@@ -251,6 +253,7 @@ def erstelle_kalender_html() -> None:
         summary_str = ""
         try:
             summary_str = html.escape(str(component.get("summary") or "Ohne Titel"))
+            uid = str(component.get("uid") or "")
 
             # Start/Ende (lokal)
             dtstart_raw = component.get("dtstart").dt
@@ -267,6 +270,14 @@ def erstelle_kalender_html() -> None:
 
             duration = end_local - start_local
             pad = duration if duration > timedelta(0) else timedelta(0)
+
+            # Helper: fügt eine Vorkommnis nur einmal hinzu
+            def add_occurrence(occ_start: datetime) -> None:
+                key = (uid or f"{summary_str}", occ_start.isoformat())
+                if key in seen_occurrences:
+                    return
+                seen_occurrences.add(key)
+                add_event_local(week_events, component, occ_start, occ_start + duration, summary_str, week_days_local)
 
             # Wiederholungen (RRULE)
             rrule_prop = component.get("rrule")
@@ -287,10 +298,10 @@ def erstelle_kalender_html() -> None:
                 for occ_start_local in rule.between(search_start, search_end, inc=True):
                     if occ_start_local in exdates_local:
                         continue
-                    add_event_local(week_events, component, occ_start_local, occ_start_local + duration, summary_str, week_days_local)
+                    add_occurrence(occ_start_local)
             else:
                 # Einzeltermin
-                add_event_local(week_events, component, start_local, end_local, summary_str, week_days_local)
+                add_occurrence(start_local)
 
             # RDATE (zusätzliche Einzeltermine)
             rdate_prop = component.get("rdate")
@@ -298,7 +309,7 @@ def erstelle_kalender_html() -> None:
             for r in rdate_list:
                 for d in r.dts:
                     r_local = to_local(d.dt, tz_vienna)
-                    add_event_local(week_events, component, r_local, r_local + duration, summary_str, week_days_local)
+                    add_occurrence(r_local)
 
         except Exception as e:
             print(f"Fehler beim Verarbeiten eines Termins ('{summary_str}'): {e}", file=sys.stderr)
