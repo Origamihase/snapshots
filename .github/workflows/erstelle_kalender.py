@@ -31,11 +31,15 @@ OUTPUT_HTML_FILE = "public/calendar/index.html"
 
 def to_utc_from_prop(dt_raw: date | datetime, tz_local: ZoneInfo) -> datetime:
     """Normalisiert ICS-Zeitwerte zuverlässig nach UTC."""
+    # KORREKTUR: Ein reines Datum (date) hat keine .replace(tzinfo=)-Methode.
+    # Es muss zuerst mit einer Zeit kombiniert werden.
     if isinstance(dt_raw, date) and not isinstance(dt_raw, datetime):
         # All-Day-Events werden als lokale Mitternacht interpretiert und nach UTC konvertiert
-        return dt_raw.replace(tzinfo=tz_local).astimezone(timezone.utc)
+        return datetime.combine(dt_raw, time.min, tzinfo=tz_local).astimezone(timezone.utc)
+    
     if getattr(dt_raw, "tzinfo", None):
         return dt_raw.astimezone(timezone.utc)
+        
     # Naive Datetimes als lokale Zeit annehmen und nach UTC konvertieren
     return dt_raw.replace(tzinfo=tz_local).astimezone(timezone.utc)
 
@@ -98,7 +102,6 @@ def erstelle_kalender_html() -> None:
             if "rrule" in component:
                 rrule = rrulestr(component.get('rrule').to_ical().decode('utf-8'), dtstart=dtstart_utc)
                 exdates = {to_utc_from_prop(d.dt, tz_vienna) for ex in component.get("exdate", []) for d in ex.dts}
-                
                 pad = duration if duration > timedelta(0) else timedelta(days=1)
                 search_start = start_of_week_dt - pad
                 
