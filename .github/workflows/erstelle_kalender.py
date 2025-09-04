@@ -5,7 +5,6 @@ import html
 import os
 import sys
 
-# Ausgabepfad bleibt unverändert
 OUTPUT_HTML_FILE = "public/calendar/index.html"
 
 def create_calendar_html():
@@ -23,13 +22,23 @@ def create_calendar_html():
         
         cal = Calendar.from_ical(cal_content)
         
-        # --- NEUE LOGIK: Arbeitswoche (Mo-Fr) berechnen ---
-        today_utc = datetime.now(timezone.utc).date()
-        start_of_week = today_utc - timedelta(days=today_utc.weekday()) # Montag
-        end_of_week = start_of_week + timedelta(days=4) # Freitag
+        # --- NEU: DEBUG-AUSGABE ALLER GEFUNDENEN TERMINE ---
+        print("\n--- DEBUG: Alle gefundenen Termine im ICS File ---")
+        has_any_events = False
+        for component in cal.walk('VEVENT'):
+            has_any_events = True
+            summary = component.get('summary')
+            start_time = component.get('dtstart').dt
+            print(f"  -> Gefunden: '{summary}' am {start_time}")
+        if not has_any_events:
+            print("  -> KEINE TERMINE im gesamten ICS File gefunden.")
+        print("--- ENDE DEBUG ---\n")
+        # --- ENDE DEBUG-AUSGABE ---
 
-        # Datenstruktur zur Speicherung der Termine pro Tag
-        # z.B. {'2025-09-01': [{'summary': 'Meeting', 'time': '10:00', 'is_all_day': False}, ...]}
+        today_utc = datetime.now(timezone.utc).date()
+        start_of_week = today_utc - timedelta(days=today_utc.weekday())
+        end_of_week = start_of_week + timedelta(days=4)
+
         week_events = {start_of_week + timedelta(days=i): [] for i in range(5)}
 
         for component in cal.walk('VEVENT'):
@@ -39,7 +48,6 @@ def create_calendar_html():
                 
                 event_date = start_time if isinstance(start_time, date) and not isinstance(start_time, datetime) else start_time.date()
 
-                # Nur Termine innerhalb der aktuellen Arbeitswoche berücksichtigen
                 if start_of_week <= event_date <= end_of_week:
                     is_all_day = not isinstance(start_time, datetime)
                     time_str = "Ganztägig" if is_all_day else start_time.strftime('%H:%M')
@@ -48,12 +56,11 @@ def create_calendar_html():
                         'summary': summary_str,
                         'time': time_str,
                         'is_all_day': is_all_day,
-                        'start_time': start_time # Für die Sortierung
+                        'start_time': start_time
                     })
             except Exception as e:
                 print(f"Fehler beim Verarbeiten eines Termins: {e}")
 
-        # --- NEUES HTML: Wochenansicht als Tabelle/Grid ---
         html_content = f"""
         <!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Wochenkalender</title>
         <style>
@@ -65,7 +72,7 @@ def create_calendar_html():
             .day-header {{ text-align: center; font-weight: bold; padding-bottom: 10px; border-bottom: 2px solid #f0f0f0; margin-bottom: 10px; }}
             .day-header .date {{ font-size: 0.9em; color: #666; font-weight: normal; }}
             .event {{ border-left: 4px solid #007bff; margin-bottom: 8px; padding: 8px; background: #f9f9f9; border-radius: 3px; }}
-            .event.all-day {{ border-left-color: #28a745; }} /* Grüne Markierung für ganztägige Termine */
+            .event.all-day {{ border-left-color: #28a745; }}
             .event-time {{ font-weight: bold; font-size: 0.9em; color: #555; }}
             .event-summary {{ font-size: 1em; }}
             .no-events {{ color: #999; text-align: center; padding-top: 20px; }}
@@ -82,7 +89,6 @@ def create_calendar_html():
             current_date = start_of_week + timedelta(days=i)
             events_for_day = week_events.get(current_date, [])
             
-            # Termine sortieren: Ganztägige zuerst, dann nach Zeit
             events_for_day.sort(key=lambda x: (not x['is_all_day'], x['start_time']))
 
             html_content += f"""
@@ -101,10 +107,12 @@ def create_calendar_html():
                         <div class="event-summary">{event['summary']}</div>
                     </div>
                     """
-            html_content += "</div>" # Ende der .day-column
+            html_content += "</div>"
 
-        html_content += """
-        </div> <div class="footer">
+        # KORRIGIERTER FOOTER (mit f-string)
+        html_content += f"""
+        </div>
+        <div class="footer">
             Kalender zuletzt aktualisiert am {datetime.now().strftime('%d.%m.%Y um %H:%M:%S Uhr')}
         </div>
         </div></body></html>
