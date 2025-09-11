@@ -136,7 +136,7 @@ def render_html(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=1920, initial-scale=1">
-<title>Wochenplan</title>
+<title>Öffentlicher Wochenplan</title>
 <style>
 :root {{
   --bg: #f5f6f8;
