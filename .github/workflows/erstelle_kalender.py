@@ -241,7 +241,7 @@ footer.foot {{
       <img src="https://cdn.riverty.design/logo/riverty-logomark-green.svg" alt="Riverty Logo">
     </div>
     <div>
-      <div class="title">Wochenplan (KW {calendar_week})</div>
+      <div class="title">Öffentlicher Wochenplan (KW {calendar_week})</div>
       <div class="sub">{date_range_str}</div>
     </div>
   </div>
