@@ -67,99 +67,71 @@ jobs:
             echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_NAME_LOWER}" >> "$GITHUB_ENV"
           fi
 
-      - name: 5) Snapshot-Hilfsfunktionen (ohne Heredocs)
+      - name: 5) Snapshots abrufen (robust, ohne Step-übergreifende Funktionen)
         shell: bash
         run: |
           set -euo pipefail
 
-          write_black_png() {
-            # 1x1 schwarzes PNG (Base64) – keine Heredocs
-            local outfile="$1"
-            mkdir -p "$(dirname "$outfile")"
-            local PNG_B64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII='
-            printf '%s' "$PNG_B64" | base64 -d > "$outfile"
-          }
-
-          adopt_previous_page() {
-            # Vorher auf GitHub Pages veröffentlichte Seite übernehmen (falls vorhanden)
-            local dir="$1"
-            local base="${BASE_URL}/${dir}"
-            if curl -fsSL --connect-timeout 10 --max-time 60 -o "public/${dir}/index.html" "${base}/index.html"; then
-              if ! curl -fsSL --connect-timeout 10 --max-time 60 -o "public/${dir}/snapshot.png" "${base}/snapshot.png"; then
-                write_black_png "public/${dir}/snapshot.png"
-              fi
-              echo "::notice ::Bestehende Seite für ${dir} übernommen."
-              return 0
-            fi
-            return 1
-          }
-
-          write_index() {
-            # Index-HTML ohne Heredocs erzeugen
-            local dir="$1"
-            local ts="$2"
-            local f="public/${dir}/index.html"
-            {
-              printf '%s\n' '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-              printf '%s\n' "<title>${dir} – Snapshot</title>"
-              printf '%s\n' '<style>body{margin:0;background:#111;color:#eee;font-family:Arial,Helvetica,sans-serif}main{padding:16px 24px}img{max-width:100%%;height:auto;border:1px solid #333;border-radius:8px;background:#000}</style>"
-              printf '%s\n' '<main>'
-              printf '%s\n' "  <img src=\"./snapshot.png?ts=${ts}\" alt=\"Snapshot ${dir}\">"
-              printf '%s\n' '</main>'
-            } > "$f"
-          }
-
-          write_fallback_index() {
-            local dir="$1"
-            local f="public/${dir}/index.html"
-            {
-              printf '%s\n' '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-              printf '%s\n' "<title>${dir}</title>"
-              printf '%s\n' '<style>body{margin:0;background:#000}</style>'
-              printf '%s\n' '<img src="./snapshot.png" alt="Snapshot" style="display:block;width:100%;height:auto;">'
-            } > "$f"
-          }
-
           fetch_snapshot() {
-            # Download; bei Fehler alte Seite behalten, bei Erstlauf schwarzes Bild + Minimalseite
-            local dir="$1"
-            local url="$2"
-            local out="public/${dir}/snapshot.png"
+            local DIR="$1"
+            local SRC_URL="$2"
+            local OUT_DIR="public/${DIR}"
+            local OUT_IMG="${OUT_DIR}/snapshot.png"
+            mkdir -p "${OUT_DIR}"
 
-            echo "→ Lade Snapshot für ${dir} …"
-            if curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 90 -H 'Cache-Control: no-cache' -o "${out}.tmp" "${url}"; then
-              mv -f "${out}.tmp" "${out}"
-              write_index "${dir}" "${TS}"
-              echo "::notice ::Snapshot für ${dir} aktualisiert."
+            echo "→ Lade Snapshot für ${DIR} …"
+            if curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 90 \
+                 -H 'Cache-Control: no-cache' \
+                 -o "${OUT_IMG}.tmp" "${SRC_URL}"; then
+              mv -f "${OUT_IMG}.tmp" "${OUT_IMG}"
+              # index.html schreiben (mit TS)
+              cat > "${OUT_DIR}/index.html" <<EOF
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${DIR} – Snapshot</title>
+<style>
+  body{margin:0;background:#111;color:#eee;font-family:Arial,Helvetica,sans-serif}
+  main{padding:16px 24px}
+  img{max-width:100%;height:auto;border:1px solid #333;border-radius:8px;background:#000}
+</style>
+<main>
+  <img src="./snapshot.png?ts=${TS}" alt="Snapshot ${DIR}">
+</main>
+EOF
+              echo "::notice ::Snapshot für ${DIR} aktualisiert."
               return 0
             fi
 
-            echo "::warning ::Download fehlgeschlagen für ${dir} – versuche, bestehende Seite zu übernehmen …"
-            if adopt_previous_page "${dir}"; then
+            echo "::warning ::Download fehlgeschlagen für ${DIR} – versuche, bestehende Seite zu übernehmen …"
+            local PREV_BASE="${BASE_URL}/${DIR}"
+            if curl -fsSL --connect-timeout 10 --max-time 60 \
+                 -o "${OUT_DIR}/index.html" "${PREV_BASE}/index.html"; then
+              if ! curl -fsSL --connect-timeout 10 --max-time 60 \
+                    -o "${OUT_IMG}" "${PREV_BASE}/snapshot.png"; then
+                # Schwarzes 1x1 PNG per Base64
+                printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII=' \
+                  | base64 -d > "${OUT_IMG}"
+              fi
+              echo "::notice ::Bestehende Seite übernommen (${DIR})."
               return 0
             fi
 
             echo "::warning ::Keine bestehende Seite vorhanden – erstelle Fallback mit schwarzem Bild."
-            write_black_png "${out}"
-            write_fallback_index "${dir}"
+            printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII=' \
+              | base64 -d > "${OUT_IMG}"
+            cat > "${OUT_DIR}/index.html" <<EOF
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${DIR}</title>
+<style>body{margin:0;background:#000}</style>
+<img src="./snapshot.png" alt="Snapshot ${DIR}" style="display:block;width:100%;height:auto;">
+EOF
             return 0
           }
 
-          export -f write_black_png
-          export -f adopt_previous_page
-          export -f write_index
-          export -f write_fallback_index
-          export -f fetch_snapshot
-
-      - name: 6) Snapshots abrufen
-        shell: bash
-        run: |
-          set -euo pipefail
           fetch_snapshot "166-544-332" "${URL_166}"
           fetch_snapshot "470-842-351" "${URL_470}"
           fetch_snapshot "287-953-334" "${URL_287}"
 
-      - name: 7) Wochenkalender erzeugen
+      - name: 6) Wochenkalender erzeugen
         shell: bash
         env:
           ICS_URL: ${{ env.ICS_URL }}
@@ -173,39 +145,55 @@ jobs:
             fi
           fi
 
-      - name: 8) Übersichtsseite (Index) erstellen
+      - name: 7) Übersichtsseite (Index) erstellen
         shell: bash
         run: |
           set -euo pipefail
-          {
-            printf '%s\n' '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            printf '%s\n' "<title>${PROJECT_NAME}</title>"
-            printf '%s\n' '<style>:root{--bg:#0f0f10;--fg:#e9eef1;--muted:#9aa8b1;--link:#7bd}body{font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--fg);margin:0}header,main{padding:24px}header{background:#151618}h1{margin:0 0 6px 0}ul{line-height:1.9;margin:16px 0 0 0;padding:0 0 0 20px}a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}.meta{color:var(--muted);font-size:14px}</style>"
-            printf '%s\n' '<header>'
-            printf '%s\n' "<h1>${PROJECT_NAME}</h1>"
-            printf '%s\n' "<div class=\"meta\">Aktualisiert: ${TS} UTC</div>"
-            printf '%s\n' "<div class=\"meta\">Basis-URL: ${BASE_URL}</div>"
-            printf '%s\n' '</header>'
-            printf '%s\n' '<main>'
-            printf '%s\n' '  <section><h2>Snapshots</h2><ul>'
-            printf '%s\n' '    <li><a href="./166-544-332/">166-544-332</a></li>'
-            printf '%s\n' '    <li><a href="./470-842-351/">470-842-351</a></li>'
-            printf '%s\n' '    <li><a href="./287-953-334/">287-953-334</a></li>'
-            printf '%s\n' '  </ul></section>'
-            printf '%s\n' '  <section><h2>Kalender</h2><ul>'
-            printf '%s\n' '    <li><a href="./calendar/">Wochenübersicht</a></li>'
-            printf '%s\n' '  </ul></section>'
-            printf '%s\n' '</main>'
-          } > public/index.html
+          cat > public/index.html <<EOF
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${PROJECT_NAME}</title>
+<style>
+  :root{--bg:#0f0f10;--fg:#e9eef1;--muted:#9aa8b1;--link:#7bd}
+  body{font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--fg);margin:0}
+  header,main{padding:24px}
+  header{background:#151618}
+  h1{margin:0 0 6px 0}
+  ul{line-height:1.9;margin:16px 0 0 0;padding:0 0 0 20px}
+  a{color:var(--link);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .meta{color:var(--muted);font-size:14px}
+</style>
+<header>
+  <h1>${PROJECT_NAME}</h1>
+  <div class="meta">Aktualisiert: ${TS} UTC</div>
+  <div class="meta">Basis-URL: ${BASE_URL}</div>
+</header>
+<main>
+  <section>
+    <h2>Snapshots</h2>
+    <ul>
+      <li><a href="./166-544-332/">166-544-332</a></li>
+      <li><a href="./470-842-351/">470-842-351</a></li>
+      <li><a href="./287-953-334/">287-953-334</a></li>
+    </ul>
+  </section>
+  <section>
+    <h2>Kalender</h2>
+    <ul>
+      <li><a href="./calendar/">Wochenübersicht</a></li>
+    </ul>
+  </section>
+</main>
+EOF
 
-      - name: 9) GitHub Pages konfigurieren
+      - name: 8) GitHub Pages konfigurieren
         uses: actions/configure-pages@v5
 
-      - name: 10) Artefakt hochladen
+      - name: 9) Artefakt hochladen
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
 
-      - name: 11) Auf GitHub Pages deployen
+      - name: 10) Auf GitHub Pages deployen
         id: deployment
         uses: actions/deploy-pages@v4
