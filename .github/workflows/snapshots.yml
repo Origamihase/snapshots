@@ -8,8 +8,7 @@ on:
       - ".github/workflows/snapshots.yml"
       - "erstelle_kalender.py"
   schedule:
-    # alle 2 Stunden
-    - cron: "0 */2 * * *"
+    - cron: "0 */2 * * *" # alle 2 Stunden
 
 permissions:
   contents: read
@@ -22,11 +21,9 @@ concurrency:
 
 env:
   PROJECT_NAME: "Riverty Snapshots"
-  # PhantomJS-Quellen (Secrets sind gesetzt)
   URL_166: ${{ secrets.PHANTOMJS_URL_166 }}
   URL_470: ${{ secrets.PHANTOMJS_URL_470 }}
   URL_287: ${{ secrets.PHANTOMJS_URL_287 }}
-  # Kalender-Quelle
   ICS_URL: ${{ secrets.ICS_CALENDAR_URL }}
 
 jobs:
@@ -44,32 +41,29 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: 3) Abhängigkeiten installieren (Kalender + Fallback-Bild)
+      - name: 3) Abhängigkeiten (Kalender)
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install icalendar python-dateutil pytz pillow
+          pip install icalendar python-dateutil pytz
 
       - name: 4) Verzeichnisse & Basisdaten setzen
         shell: bash
         run: |
           set -euo pipefail
-
-          # Ausgabe-Verzeichnisse
           mkdir -p public/166-544-332 public/470-842-351 public/287-953-334 public/calendar
           : > public/.nojekyll
 
-          # Zeitstempel (für Cache-Busting)
           TS="$(date -u +%Y%m%d%H%M%S)"
           echo "TS=${TS}" >> "$GITHUB_ENV"
 
-          # BASE_URL (User-/Org-Page vs. Project-Page)
           OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          REPO_LOWER="$(echo "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
-          if [ "${REPO_LOWER}" = "${OWNER_LOWER}.github.io" ]; then
+          REPO_FULL_LOWER="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          REPO_NAME_LOWER="${REPO_FULL_LOWER#${OWNER_LOWER}/}"
+          if [ "${REPO_NAME_LOWER}" = "${OWNER_LOWER}.github.io" ]; then
             echo "BASE_URL=https://${OWNER_LOWER}.github.io" >> "$GITHUB_ENV"
           else
-            echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_LOWER}" >> "$GITHUB_ENV"
+            echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_NAME_LOWER}" >> "$GITHUB_ENV"
           fi
 
       - name: 5) Hilfsfunktionen bereitstellen
@@ -77,70 +71,54 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Schwarzes PNG erzeugen (Fallback bei Erstlauf)
-          create_black_png() {
-            local out="$1"
-            python - "$out" <<'PY'
-import sys, os
-from PIL import Image
-out = sys.argv[1]
-os.makedirs(os.path.dirname(out), exist_ok=True)
-# 1280x720 schwarzes PNG
-Image.new('RGB', (1280, 720), (0, 0, 0)).save(out, 'PNG')
-PY
+          # 1x1 schwarzes PNG aus Base64 schreiben (robust, ohne Extra-Tools)
+          write_black_png() {
+            # schreibt ein 1x1 PNG (vollschwarz) nach $1
+            local outfile="$1"
+            mkdir -p "$(dirname "$outfile")"
+            base64 -d > "$outfile" <<'B64'
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII=
+B64
           }
 
-          # Vorherige, bereits veröffentlichte Seite übernehmen (HTML und PNG)
+          # Bereits veröffentlichte Seite übernehmen (falls vorhanden)
           adopt_previous_page() {
             local dir="$1"
             local base="${BASE_URL}/${dir}"
             local ok=0
 
-            # Vorige index.html holen
-            if curl -fSL --connect-timeout 10 --max-time 60 \
+            if curl -fsSL --connect-timeout 10 --max-time 60 \
                  -o "public/${dir}/index.html" "${base}/index.html"; then
               ok=1
             fi
 
-            if [ "${ok}" -eq 1 ]; then
-              # Versuch, das bisherige Bild zu holen – sonst schwarzes PNG
-              if ! curl -fSL --connect-timeout 10 --max-time 60 \
+            if [ "$ok" -eq 1 ]; then
+              if ! curl -fsSL --connect-timeout 10 --max-time 60 \
                     -o "public/${dir}/snapshot.png" "${base}/snapshot.png"; then
-                create_black_png "public/${dir}/snapshot.png"
+                write_black_png "public/${dir}/snapshot.png"
               fi
-              echo "::notice ::Vorige Seite für ${dir} übernommen."
+              echo "::notice ::Bestehende Seite für ${dir} übernommen."
               return 0
-            else
-              return 1
             fi
+            return 1
           }
 
-          # Snapshot laden; bei Fehler: alte Seite übernehmen, sonst Fallback (schwarzes Bild)
+          # Snapshot laden; bei Fehler bestehende Seite behalten, sonst Fallback erzeugen
           fetch_snapshot() {
             local dir="$1"
             local url="$2"
             local out="public/${dir}/snapshot.png"
 
-            echo "→ Lade Snapshot für ${dir} …"
+            echo "Lade Snapshot für ${dir} ..."
             if curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 90 \
                  -H 'Cache-Control: no-cache' \
                  -o "${out}.tmp" "${url}"; then
-
-              # Content-Type (informativ)
-              ct="$(file -b --mime-type "${out}.tmp" || true)"
-              case "${ct}" in
-                image/png|image/jpeg|image/webp) : ;;
-                *) echo "::notice ::Unerwarteter MIME-Type (${ct}) – Datei wird dennoch verwendet." ;;
-              esac
-
               mv -f "${out}.tmp" "${out}"
-
-              # Frische Seite erzeugen
               cat > "public/${dir}/index.html" <<HTML
 <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${dir} – Snapshot</title>
 <style>
-  body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0}
+  body{margin:0;background:#111;color:#eee;font-family:Arial,Helvetica,sans-serif}
   main{padding:16px 24px}
   img{max-width:100%;height:auto;border:1px solid #333;border-radius:8px;background:#000}
 </style>
@@ -152,15 +130,14 @@ HTML
               return 0
             fi
 
-            echo "::warning ::Download fehlgeschlagen für ${dir} – versuche, bestehende Seite zu übernehmen …"
+            echo "::warning ::Download fehlgeschlagen für ${dir} – versuche, bestehende Seite zu übernehmen ..."
             if adopt_previous_page "${dir}"; then
-              # Bestehende Seite erfolgreich übernommen – nichts überschreiben
+              # Bestehende Seite übernommen; nichts überschreiben
               return 0
             fi
 
-            echo "::warning ::Keine bestehende Seite gefunden – erstelle Fallback mit schwarzem Bild."
-            create_black_png "${out}"
-            # Minimal-Seite, die nur das schwarze Bild anzeigt
+            echo "::warning ::Keine bestehende Seite vorhanden – erstelle Fallback mit schwarzem Bild."
+            write_black_png "${out}"
             cat > "public/${dir}/index.html" <<HTML
 <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${dir}</title>
@@ -170,7 +147,7 @@ HTML
             return 0
           }
 
-          export -f create_black_png
+          export -f write_black_png
           export -f adopt_previous_page
           export -f fetch_snapshot
 
@@ -191,7 +168,6 @@ HTML
           if [ -z "${ICS_URL:-}" ]; then
             echo "::warning ::ICS_URL ist leer – Kalender wird übersprungen."
           else
-            # Script erzeugt: public/calendar/index.html
             if ! python3 erstelle_kalender.py; then
               echo "::warning ::Kalender-Erstellung fehlgeschlagen – fahre fort."
             fi
