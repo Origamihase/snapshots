@@ -45,7 +45,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Das Verzeichnis für 'health' wird nicht mehr erstellt
           mkdir -p public/470-842-351 public/166-544-332 public/287-953-334 public/calendar
           : > public/.nojekyll
           echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
@@ -59,10 +58,11 @@ jobs:
 
       - name: 5. Kalender-HTML erstellen
         run: python .github/workflows/erstelle_kalender.py
-      
+
       - name: 6. Helfer-Skript für Snapshots erstellen
         shell: bash
         run: |
+          set -euo pipefail
           cat > safe_fetch.sh << 'SH'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -71,7 +71,9 @@ jobs:
           IMG="${OUTDIR}/image.png"
           TMP="${OUTDIR}/.new.png"
           mkdir -p "${OUTDIR}"
+          # Vorhandenes Bild vom veröffentlichten Stand übernehmen
           curl -fsSL "${BASE}/${ID}/image.png" -o "${IMG}" || true
+          # Neues Bild laden
           if curl -fSL --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 "${REMOTE}" -o "${TMP}"; then
             TYPE="$(file -b --mime-type "${TMP}" || true)"
             SIZE="$(stat -c%s "${TMP}" 2>/dev/null || echo 0)"
@@ -83,23 +85,25 @@ jobs:
           else
             rm -f "${TMP}" 2>/dev/null || true
           fi
+          # Erstlauf-Fallback (schwarzes PNG), falls kein Bild vorhanden
           if [ ! -s "${IMG}" ]; then
-            echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1H...QVR42mP8/x8AAusB9b5/2moAAAAASUVORK5CYII=' | base64 -d > "${IMG}"
+            printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII=' | base64 -d > "${IMG}"
           fi
-          cat > "${OUTDIR}/index.html" << HTML
-          <!doctype html><html lang="de"><head>
-          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Snapshot ${ID}</title>
-          <meta http-equiv="refresh" content="1800">
-          <style>html,body{height:100%;margin:0;background:#0...dth:100%;height:100%;object-fit:contain;background:#000}</style>
-          </head><body>
-          <img src="image.png?v=${TS}" alt="Snapshot ${ID}">
-          </body></html>
-          HTML
+          # Index-Seite schreiben
+          {
+            printf '%s\n' '<!doctype html><html lang="de"><head>'
+            printf '%s\n' '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            printf '%s\n' "<title>Snapshot ${ID}</title>"
+            printf '%s\n' '<meta http-equiv="refresh" content="1800">'
+            printf '%s\n' '<style>html,body{height:100%%;margin:0;background:#111;color:#eee;font-family:Arial,Helvetica,sans-serif}img{width:100%%;height:100%%;object-fit:contain;background:#000}</style>'
+            printf '%s\n' '</head><body>'
+            printf '%s\n' "  <img src=\"image.png?v=${TS}\" alt=\"Snapshot ${ID}\">"
+            printf '%s\n' '</body></html>'
+          } > "${OUTDIR}/index.html"
           SH
           chmod +x safe_fetch.sh
 
-      - name: 7. Snapshot 470-842-31 aktualisieren
+      - name: 7. Snapshot 470-842-351 aktualisieren
         run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL" "$TS"
 
       - name: 8. Snapshot 287-953-334 aktualisieren
@@ -111,20 +115,19 @@ jobs:
       - name: 10. Haupt-Indexseite erstellen
         shell: bash
         run: |
-          cat > public/index.html << HTML
-          <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>${PROJECT_NAME} Snapshots</title>
-          <style>body{font-family:Arial,Helvetica,sans-seri...round:#111;color:#eee} a{color:#7bd} ul{line-height:1.8}</style>
-          <h1>${PROJECT_NAME} Snapshots</h1>
-          <ul>
-            <li><a href="./470-842-351/">Snapshot 470-842-351</a></li>
-            <li><a href="./287-953-334/">Snapshot 287-953-334</a></li>
-            <li><a href="./166-544-332/">Snapshot 166-544-332</a></li>
-            <li><a href="./calendar/">Kalender</a></li>
-            </ul>
-          HTML
-      
-      # Der Schritt zur Erstellung der Health-Seite wurde vollständig entfernt
+          set -euo pipefail
+          {
+            printf '%s\n' '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            printf '%s\n' "<title>${PROJECT_NAME} Snapshots</title>"
+            printf '%s\n' '<style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee} a{color:#7bd} ul{line-height:1.8}</style>'
+            printf '%s\n' '<h1>'"${PROJECT_NAME}"' Snapshots</h1>'
+            printf '%s\n' '<ul>'
+            printf '%s\n' '  <li><a href="./470-842-351/">Snapshot 470-842-351</a></li>'
+            printf '%s\n' '  <li><a href="./287-953-334/">Snapshot 287-953-334</a></li>'
+            printf '%s\n' '  <li><a href="./166-544-332/">Snapshot 166-544-332</a></li>'
+            printf '%s\n' '  <li><a href="./calendar/">Kalender</a></li>'
+            printf '%s\n' '</ul>'
+          } > public/index.html
 
       - name: 11. Artefakt hochladen
         uses: actions/upload-pages-artifact@v3
