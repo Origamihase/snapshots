@@ -51,7 +51,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p public/166-544-332 public/470-842-351 public/287-953-334 public/calendar
+          mkdir -p public/166-544-332 public/470-842-351 public/287-953-334 public/calendar scripts
           : > public/.nojekyll
 
           TS="$(date -u +%Y%m%d%H%M%S)"
@@ -66,98 +66,105 @@ jobs:
             echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_NAME_LOWER}" >> "$GITHUB_ENV"
           fi
 
-      - name: 5) Hilfsfunktionen bereitstellen
+      - name: 5) Hilfsskript schreiben (robuste Snapshot-Logik)
         shell: bash
         run: |
           set -euo pipefail
+          cat > scripts/fetch.sh <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
 
-          # 1x1 schwarzes PNG aus Base64 schreiben (robust, ohne Extra-Tools)
-          write_black_png() {
-            # schreibt ein 1x1 PNG (vollschwarz) nach $1
-            local outfile="$1"
-            mkdir -p "$(dirname "$outfile")"
-            base64 -d > "$outfile" <<'B64'
-iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII=
-B64
-          }
+# Schwarzes 1x1 PNG als Base64 (ohne weitere Here-Docs)
+write_black_png() {
+  local outfile="$1"
+  mkdir -p "$(dirname "$outfile")"
+  local PNG_B64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII='
+  printf '%s' "$PNG_B64" | base64 -d > "$outfile"
+}
 
-          # Bereits veröffentlichte Seite übernehmen (falls vorhanden)
-          adopt_previous_page() {
-            local dir="$1"
-            local base="${BASE_URL}/${dir}"
-            local ok=0
+# Bereits veröffentlichte Seite übernehmen (falls vorhanden)
+adopt_previous_page() {
+  local dir="$1"
+  local base="${BASE_URL}/${dir}"
+  local ok=0
 
-            if curl -fsSL --connect-timeout 10 --max-time 60 \
-                 -o "public/${dir}/index.html" "${base}/index.html"; then
-              ok=1
-            fi
+  if curl -fsSL --connect-timeout 10 --max-time 60 \
+       -o "public/${dir}/index.html" "${base}/index.html"; then
+    ok=1
+  fi
 
-            if [ "$ok" -eq 1 ]; then
-              if ! curl -fsSL --connect-timeout 10 --max-time 60 \
-                    -o "public/${dir}/snapshot.png" "${base}/snapshot.png"; then
-                write_black_png "public/${dir}/snapshot.png"
-              fi
-              echo "::notice ::Bestehende Seite für ${dir} übernommen."
-              return 0
-            fi
-            return 1
-          }
+  if [ "$ok" -eq 1 ]; then
+    if ! curl -fsSL --connect-timeout 10 --max-time 60 \
+          -o "public/${dir}/snapshot.png" "${base}/snapshot.png"; then
+      write_black_png "public/${dir}/snapshot.png"
+    fi
+    echo "::notice ::Bestehende Seite für ${dir} übernommen."
+    return 0
+  fi
+  return 1
+}
 
-          # Snapshot laden; bei Fehler bestehende Seite behalten, sonst Fallback erzeugen
-          fetch_snapshot() {
-            local dir="$1"
-            local url="$2"
-            local out="public/${dir}/snapshot.png"
+# Snapshot laden; bei Fehler bestehende Seite behalten, sonst Fallback (Erstlauf)
+fetch_snapshot() {
+  local dir="$1"
+  local url="$2"
+  local out="public/${dir}/snapshot.png"
 
-            echo "Lade Snapshot für ${dir} ..."
-            if curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 90 \
-                 -H 'Cache-Control: no-cache' \
-                 -o "${out}.tmp" "${url}"; then
-              mv -f "${out}.tmp" "${out}"
-              cat > "public/${dir}/index.html" <<HTML
+  echo "→ Lade Snapshot für ${dir} …"
+  if curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 90 \
+       -H 'Cache-Control: no-cache' \
+       -o "${out}.tmp" "${url}"; then
+    mv -f "${out}.tmp" "${out}"
+    # Frische HTML-Seite erzeugen (Placeholder, danach ersetzen)
+    cat > "public/${dir}/index.html" <<'HTML'
 <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${dir} – Snapshot</title>
+<title>__DIR__ – Snapshot</title>
 <style>
   body{margin:0;background:#111;color:#eee;font-family:Arial,Helvetica,sans-serif}
   main{padding:16px 24px}
   img{max-width:100%;height:auto;border:1px solid #333;border-radius:8px;background:#000}
 </style>
 <main>
-  <img src="./snapshot.png?ts=${TS}" alt="Snapshot ${dir}">
+  <img src="./snapshot.png?ts=__TS__" alt="Snapshot __DIR__">
 </main>
 HTML
-              echo "::notice ::Snapshot für ${dir} aktualisiert."
-              return 0
-            fi
+    sed -i "s/__DIR__/${dir}/g" "public/${dir}/index.html"
+    sed -i "s/__TS__/${TS}/g" "public/${dir}/index.html"
+    echo "::notice ::Snapshot für ${dir} aktualisiert."
+    return 0
+  fi
 
-            echo "::warning ::Download fehlgeschlagen für ${dir} – versuche, bestehende Seite zu übernehmen ..."
-            if adopt_previous_page "${dir}"; then
-              # Bestehende Seite übernommen; nichts überschreiben
-              return 0
-            fi
+  echo "::warning ::Download fehlgeschlagen für ${dir} – versuche, bestehende Seite zu übernehmen …"
+  if adopt_previous_page "${dir}"; then
+    return 0
+  fi
 
-            echo "::warning ::Keine bestehende Seite vorhanden – erstelle Fallback mit schwarzem Bild."
-            write_black_png "${out}"
-            cat > "public/${dir}/index.html" <<HTML
+  echo "::warning ::Keine bestehende Seite vorhanden – erstelle Fallback mit schwarzem Bild."
+  write_black_png "${out}"
+  cat > "public/${dir}/index.html" <<'HTML'
 <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${dir}</title>
+<title>__DIR__</title>
 <style>body{margin:0;background:#000}</style>
-<img src="./snapshot.png" alt="Snapshot ${dir}" style="display:block;width:100%;height:auto;">
+<img src="./snapshot.png" alt="Snapshot __DIR__" style="display:block;width:100%;height:auto;">
 HTML
-            return 0
-          }
+  sed -i "s/__DIR__/${dir}/g" "public/${dir}/index.html"
+  return 0
+}
 
-          export -f write_black_png
-          export -f adopt_previous_page
-          export -f fetch_snapshot
+case "${1:-}" in
+  fetch) fetch_snapshot "$2" "$3" ;;
+  *) echo "Usage: $0 fetch <dir> <url>" >&2; exit 2 ;;
+esac
+BASH
+          chmod +x scripts/fetch.sh
 
       - name: 6) Snapshots abrufen
         shell: bash
         run: |
           set -euo pipefail
-          fetch_snapshot "166-544-332" "${URL_166}"
-          fetch_snapshot "470-842-351" "${URL_470}"
-          fetch_snapshot "287-953-334" "${URL_287}"
+          scripts/fetch.sh fetch "166-544-332" "${URL_166}"
+          scripts/fetch.sh fetch "470-842-351" "${URL_470}"
+          scripts/fetch.sh fetch "287-953-334" "${URL_287}"
 
       - name: 7) Wochenkalender erzeugen
         shell: bash
