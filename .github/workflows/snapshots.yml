@@ -1,9 +1,15 @@
 name: Website Snapshots & Kalender
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
   workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - ".github/workflows/snapshots.yml"
+      - "erstelle_kalender.py"
+  schedule:
+    # alle 2 Stunden
+    - cron: "0 */2 * * *"
 
 permissions:
   contents: read
@@ -11,43 +17,53 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  PROJECT_NAME: "Riverty Snapshots"
+  # PhantomJS-Quellen (Secrets sind gesetzt)
+  URL_166: ${{ secrets.PHANTOMJS_URL_166 }}
+  URL_470: ${{ secrets.PHANTOMJS_URL_470 }}
+  URL_287: ${{ secrets.PHANTOMJS_URL_287 }}
+  # Kalender-Quelle
+  ICS_URL: ${{ secrets.ICS_CALENDAR_URL }}
 
 jobs:
-  build-and-publish:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    env:
-      PROJECT_NAME: "Website"
-      URL_470: ${{ secrets.PHANTOMJS_URL_470 }}
-      URL_166: ${{ secrets.PHANTOMJS_URL_166 }}
-      ICS_URL: ${{ secrets.ICS_CALENDAR_URL }}
 
     steps:
-      - name: 1. Repository auschecken
+      - name: 1) Repository auschecken
         uses: actions/checkout@v4
 
-      - name: 2. Python-Umgebung einrichten
+      - name: 2) Python einrichten
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: 3. Python-Abhängigkeiten installieren
-        run: pip install requests icalendar python-dateutil
+      - name: 3) Abhängigkeiten installieren (Kalender + Fallback-Bild)
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install icalendar python-dateutil pytz pillow
 
-      - name: 4. Verzeichnisse vorbereiten und BASE_URL setzen
+      - name: 4) Verzeichnisse & Basisdaten setzen
         shell: bash
         run: |
           set -euo pipefail
-          # Das Verzeichnis für 'health' wird nicht mehr erstellt
-          mkdir -p public/470-842-351 public/166-544-332 public/calendar
+
+          # Ausgabe-Verzeichnisse
+          mkdir -p public/166-544-332 public/470-842-351 public/287-953-334 public/calendar
           : > public/.nojekyll
-          echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
+
+          # Zeitstempel (für Cache-Busting)
+          TS="$(date -u +%Y%m%d%H%M%S)"
+          echo "TS=${TS}" >> "$GITHUB_ENV"
+
+          # BASE_URL (User-/Org-Page vs. Project-Page)
           OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           REPO_LOWER="$(echo "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
           if [ "${REPO_LOWER}" = "${OWNER_LOWER}.github.io" ]; then
@@ -56,76 +72,180 @@ jobs:
             echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_LOWER}" >> "$GITHUB_ENV"
           fi
 
-      - name: 5. Kalender-HTML erstellen
-        run: python .github/workflows/erstelle_kalender.py
-      
-      - name: 6. Helfer-Skript für Snapshots erstellen
+      - name: 5) Hilfsfunktionen bereitstellen
         shell: bash
         run: |
-          cat > safe_fetch.sh << 'SH'
-          #!/usr/bin/env bash
           set -euo pipefail
-          ID="$1"; REMOTE="$2"; BASE="$3"; TS="$4"
-          OUTDIR="public/${ID}"
-          IMG="${OUTDIR}/image.png"
-          TMP="${OUTDIR}/.new.png"
-          mkdir -p "${OUTDIR}"
-          curl -fsSL "${BASE}/${ID}/image.png" -o "${IMG}" || true
-          if curl -fSL --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 "${REMOTE}" -o "${TMP}"; then
-            TYPE="$(file -b --mime-type "${TMP}" || true)"
-            SIZE="$(stat -c%s "${TMP}" 2>/dev/null || echo 0)"
-            if [ "${TYPE}" = "image/png" ] && [ "${SIZE}" -ge 20000 ]; then
-              mv -f "${TMP}" "${IMG}"
-            else
-              rm -f "${TMP}"
+
+          # Schwarzes PNG erzeugen (Fallback bei Erstlauf)
+          create_black_png() {
+            local out="$1"
+            python - "$out" <<'PY'
+import sys, os
+from PIL import Image
+out = sys.argv[1]
+os.makedirs(os.path.dirname(out), exist_ok=True)
+# 1280x720 schwarzes PNG
+Image.new('RGB', (1280, 720), (0, 0, 0)).save(out, 'PNG')
+PY
+          }
+
+          # Vorherige, bereits veröffentlichte Seite übernehmen (HTML und PNG)
+          adopt_previous_page() {
+            local dir="$1"
+            local base="${BASE_URL}/${dir}"
+            local ok=0
+
+            # Vorige index.html holen
+            if curl -fSL --connect-timeout 10 --max-time 60 \
+                 -o "public/${dir}/index.html" "${base}/index.html"; then
+              ok=1
             fi
-          else
-            rm -f "${TMP}" 2>/dev/null || true
-          fi
-          if [ ! -s "${IMG}" ]; then
-            echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9b5/2moAAAAASUVORK5CYII=' | base64 -d > "${IMG}"
-          fi
-          cat > "${OUTDIR}/index.html" <<HTML
-          <!doctype html><html lang="de"><head>
-          <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>Snapshot ${ID}</title>
-          <meta http-equiv="refresh" content="1800">
-          <style>html,body{height:100%;margin:0;background:#000} img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}</style>
-          </head><body>
-          <img src="image.png?v=${TS}" alt="Snapshot ${ID}">
-          </body></html>
-          HTML
-          SH
-          chmod +x safe_fetch.sh
 
-      - name: 7. Snapshot 470-842-31 aktualisieren
-        run: ./safe_fetch.sh "470-842-351" "$URL_470" "$BASE_URL" "$TS"
+            if [ "${ok}" -eq 1 ]; then
+              # Versuch, das bisherige Bild zu holen – sonst schwarzes PNG
+              if ! curl -fSL --connect-timeout 10 --max-time 60 \
+                    -o "public/${dir}/snapshot.png" "${base}/snapshot.png"; then
+                create_black_png "public/${dir}/snapshot.png"
+              fi
+              echo "::notice ::Vorige Seite für ${dir} übernommen."
+              return 0
+            else
+              return 1
+            fi
+          }
 
-      - name: 8. Snapshot 166-544-332 aktualisieren
-        run: ./safe_fetch.sh "166-544-332" "$URL_166" "$BASE_URL" "$TS"
+          # Snapshot laden; bei Fehler: alte Seite übernehmen, sonst Fallback (schwarzes Bild)
+          fetch_snapshot() {
+            local dir="$1"
+            local url="$2"
+            local out="public/${dir}/snapshot.png"
 
-      - name: 9. Haupt-Indexseite erstellen
+            echo "→ Lade Snapshot für ${dir} …"
+            if curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 90 \
+                 -H 'Cache-Control: no-cache' \
+                 -o "${out}.tmp" "${url}"; then
+
+              # Content-Type (informativ)
+              ct="$(file -b --mime-type "${out}.tmp" || true)"
+              case "${ct}" in
+                image/png|image/jpeg|image/webp) : ;;
+                *) echo "::notice ::Unerwarteter MIME-Type (${ct}) – Datei wird dennoch verwendet." ;;
+              esac
+
+              mv -f "${out}.tmp" "${out}"
+
+              # Frische Seite erzeugen
+              cat > "public/${dir}/index.html" <<HTML
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${dir} – Snapshot</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;margin:0}
+  main{padding:16px 24px}
+  img{max-width:100%;height:auto;border:1px solid #333;border-radius:8px;background:#000}
+</style>
+<main>
+  <img src="./snapshot.png?ts=${TS}" alt="Snapshot ${dir}">
+</main>
+HTML
+              echo "::notice ::Snapshot für ${dir} aktualisiert."
+              return 0
+            fi
+
+            echo "::warning ::Download fehlgeschlagen für ${dir} – versuche, bestehende Seite zu übernehmen …"
+            if adopt_previous_page "${dir}"; then
+              # Bestehende Seite erfolgreich übernommen – nichts überschreiben
+              return 0
+            fi
+
+            echo "::warning ::Keine bestehende Seite gefunden – erstelle Fallback mit schwarzem Bild."
+            create_black_png "${out}"
+            # Minimal-Seite, die nur das schwarze Bild anzeigt
+            cat > "public/${dir}/index.html" <<HTML
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${dir}</title>
+<style>body{margin:0;background:#000}</style>
+<img src="./snapshot.png" alt="Snapshot ${dir}" style="display:block;width:100%;height:auto;">
+HTML
+            return 0
+          }
+
+          export -f create_black_png
+          export -f adopt_previous_page
+          export -f fetch_snapshot
+
+      - name: 6) Snapshots abrufen
         shell: bash
         run: |
-          cat > public/index.html << HTML
-          <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>${PROJECT_NAME} Snapshots</title>
-          <style>body{font-family:Arial,Helvetica,sans-serif;padding:24px;background:#111;color:#eee} a{color:#7bd} ul{line-height:1.8}</style>
-          <h1>${PROJECT_NAME} Snapshots</h1>
-          <ul>
-            <li><a href="./470-842-351/">Snapshot 470-842-351</a></li>
-            <li><a href="./166-544-332/">Snapshot 166-544-332</a></li>
-            <li><a href="./calendar/">Kalender</a></li>
-            </ul>
-          HTML
-      
-      # Der Schritt zur Erstellung der Health-Seite wurde vollständig entfernt
+          set -euo pipefail
+          fetch_snapshot "166-544-332" "${URL_166}"
+          fetch_snapshot "470-842-351" "${URL_470}"
+          fetch_snapshot "287-953-334" "${URL_287}"
 
-      - name: 10. Artefakt hochladen
+      - name: 7) Wochenkalender erzeugen
+        shell: bash
+        env:
+          ICS_URL: ${{ env.ICS_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ICS_URL:-}" ]; then
+            echo "::warning ::ICS_URL ist leer – Kalender wird übersprungen."
+          else
+            # Script erzeugt: public/calendar/index.html
+            if ! python3 erstelle_kalender.py; then
+              echo "::warning ::Kalender-Erstellung fehlgeschlagen – fahre fort."
+            fi
+          fi
+
+      - name: 8) Übersichtsseite (Index) erstellen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > public/index.html <<HTML
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${PROJECT_NAME}</title>
+<style>
+  :root{--bg:#0f0f10;--fg:#e9eef1;--muted:#9aa8b1;--link:#7bd}
+  body{font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--fg);margin:0}
+  header,main{padding:24px}
+  header{background:#151618}
+  h1{margin:0 0 6px 0}
+  ul{line-height:1.9;margin:16px 0 0 0;padding:0 0 0 20px}
+  a{color:var(--link);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .meta{color:var(--muted);font-size:14px}
+</style>
+<header>
+  <h1>${PROJECT_NAME}</h1>
+  <div class="meta">Aktualisiert: ${TS} UTC</div>
+  <div class="meta">Basis-URL: ${BASE_URL}</div>
+</header>
+<main>
+  <section>
+    <h2>Snapshots</h2>
+    <ul>
+      <li><a href="./166-544-332/">166-544-332</a></li>
+      <li><a href="./470-842-351/">470-842-351</a></li>
+      <li><a href="./287-953-334/">287-953-334</a></li>
+    </ul>
+  </section>
+  <section>
+    <h2>Kalender</h2>
+    <ul>
+      <li><a href="./calendar/">Wochenübersicht</a></li>
+    </ul>
+  </section>
+</main>
+HTML
+
+      - name: 9) GitHub Pages konfigurieren
+        uses: actions/configure-pages@v5
+
+      - name: 10) Artefakt hochladen
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
 
-      - name: 11. Auf GitHub Pages deployen
+      - name: 11) Auf GitHub Pages deployen
         id: deployment
         uses: actions/deploy-pages@v4
