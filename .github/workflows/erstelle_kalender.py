@@ -185,7 +185,8 @@ main.container {{ padding: 16px 20px 8px; flex: 1; }}
 .grid {{
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
+  gap: 24px;
+  align-items: stretch;
 }}
 
 .day {{
@@ -193,11 +194,11 @@ main.container {{ padding: 16px 20px 8px; flex: 1; }}
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 6px 18px rgba(0,0,0,.06);
-  min-height: 160px;
+  min-height: 380px;
   display: flex; flex-direction: column;
 }}
 .day-header {{
-  padding: 10px 12px;
+  padding: 22px 24px;
   border-bottom: 1px solid var(--border);
   display: flex; align-items: baseline; justify-content: space-between;
   background: linear-gradient(180deg, rgba(0,0,0,.02), transparent);
@@ -214,11 +215,20 @@ main.container {{ padding: 16px 20px 8px; flex: 1; }}
   border-bottom-color: rgba(79,159,90,.35);
 }}
 
-.events {{ padding: 10px 12px 12px; display: grid; gap: 10px; }}
-.event {{ display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; }}
+.events {{
+  padding: 22px 24px 26px;
+  display: grid;
+  gap: 18px;
+}}
+.event {{
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: start;
+}}
 
 .badge {{
-  font-weight: 700; font-size: 16px; padding: 6px 12px; border-radius: 999px;
+  font-weight: 700; font-size: 17px; padding: 8px 16px; border-radius: 999px;
   border: 1px solid rgba(79,159,90,.35); background: var(--accent-soft);
   white-space: nowrap;
 }}
@@ -226,7 +236,12 @@ main.container {{ padding: 16px 20px 8px; flex: 1; }}
 .summary {{ font-size: 18px; line-height: 1.4; }}
 .summary .meta {{ font-size: 16px; color: var(--muted); margin-top: 4px; }}
 
-.no-events {{ color: var(--muted); text-align: center; padding: 18px 10px 22px; font-style: italic; }}
+.no-events {{
+  color: var(--muted);
+  text-align: center;
+  padding: 28px 16px 32px;
+  font-style: italic;
+}}
 
 footer.foot {{
   color: #6b7280; font-size: 13px; text-align: center; padding: 6px 0 12px;
