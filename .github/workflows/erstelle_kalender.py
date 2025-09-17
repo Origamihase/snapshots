@@ -167,16 +167,17 @@ body {{
 header.topbar {{
   background: linear-gradient(135deg, var(--brand), var(--brand2));
   color: #fff;
-  padding: 12px 20px;
+  padding: 24px 36px;
 }}
-.topbar-inner {{ display: flex; align-items: center; gap: 14px; }}
+.topbar-inner {{ display: flex; align-items: center; gap: 28px; }}
 .logo {{
   background: #fff;
   border-radius: 10px;
-  padding: 6px;
+  padding: 12px;
   display: flex; align-items: center; justify-content: center;
 }}
-.logo img {{ width: 28px; height: 28px; display: block; }}
+.logo img {{ width: 40px; height: 40px; display: block; }}
+.headline {{ display: flex; flex-direction: column; gap: 6px; }}
 .title {{ font-weight: 700; font-size: 32px; letter-spacing: .2px; }}
 .sub {{ font-size: 18px; opacity: .95; }}
 
@@ -268,7 +269,7 @@ footer.foot {{
     <div class="logo" aria-hidden="true">
       <img src="https://cdn.riverty.design/logo/riverty-logomark-green.svg" alt="Riverty Logo">
     </div>
-    <div>
+    <div class="headline">
       <div class="title">Öffentlicher Wochenplan (KW {calendar_week})</div>
       <div class="sub">{date_range_str}</div>
     </div>
