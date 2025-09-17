@@ -167,14 +167,14 @@ body {{
 header.topbar {{
   background: linear-gradient(135deg, var(--brand), var(--brand2));
   color: #fff;
-  padding: 48px 72px 56px;
+  padding: 48px 32px 56px;
 }}
 .topbar-inner {{
   display: flex;
   align-items: center;
   gap: 72px;
-  max-width: 1480px;
-  margin: 0 auto;
+  margin-left: 0;
+  margin-right: auto;
   flex-wrap: wrap;
   row-gap: 36px;
 }}
@@ -193,7 +193,7 @@ header.topbar {{
   flex-direction: column;
   gap: 18px;
   min-width: min(560px, 100%);
-  padding-left: 16px;
+  padding-left: 8px;
 }}
 .headline-text {{
   display: flex;
