@@ -88,10 +88,10 @@ def add_event_local(
                 is_all = True
             else:
                 if same_day:
-                    time_str = f"{start_local:%H:%M}–{end_local:%H:%M}"
+                    time_str = f"{start_local:%H:%M} – {end_local:%H:%M}"
                 elif ends_midnight_next and current == start_local.date():
-                    # 24h-Block: 00:00–00:00 → Ganztägig
-                    time_str = "Ganztägig" if start_local.time() == time.min else f"{start_local:%H:%M}–00:00"
+                    # 24h-Block: 00:00 – 00:00 → Ganztägig
+                    time_str = "Ganztägig" if start_local.time() == time.min else f"{start_local:%H:%M} – 00:00"
                 elif current == start_local.date():
                     time_str = f"Start: {start_local:%H:%M}"
                 elif current == loop_end_date and end_local.time() > time.min:
