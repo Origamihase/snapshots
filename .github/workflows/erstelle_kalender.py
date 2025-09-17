@@ -172,7 +172,7 @@ header.topbar {{
 .topbar-inner {{
   display: flex;
   align-items: center;
-  gap: 48px;
+  gap: 72px;
   max-width: 1480px;
   margin: 0 auto;
   flex-wrap: wrap;
@@ -193,6 +193,7 @@ header.topbar {{
   flex-direction: column;
   gap: 18px;
   min-width: min(560px, 100%);
+  padding-left: 16px;
 }}
 .headline-text {{
   display: flex;
