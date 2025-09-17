@@ -217,24 +217,37 @@ main.container {{ padding: 16px 20px 8px; flex: 1; }}
 
 .events {{
   padding: 22px 24px 26px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 18px;
 }}
 .event {{
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 14px;
-  align-items: start;
+  background: linear-gradient(180deg, rgba(79,159,90,.08), rgba(79,159,90,.02));
+  border: 1px solid rgba(79,159,90,.28);
+  border-radius: var(--radius);
+  padding: 20px 22px 22px;
+  box-shadow: 0 10px 24px rgba(0,0,0,.06);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }}
-
-.badge {{
-  font-weight: 700; font-size: 17px; padding: 8px 16px; border-radius: 999px;
-  border: 1px solid rgba(79,159,90,.35); background: var(--accent-soft);
-  white-space: nowrap;
+.event-time {{
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  color: var(--brand);
 }}
-.badge.all {{ border-style: dashed; }}
-.summary {{ font-size: 18px; line-height: 1.4; }}
-.summary .meta {{ font-size: 16px; color: var(--muted); margin-top: 4px; }}
+.event-body {{
+  font-size: 18px;
+  line-height: 1.55;
+  color: var(--text);
+}}
+.summary {{
+  margin: 0;
+  font-weight: 600;
+}}
+.event-body .meta {{ font-size: 16px; color: var(--muted); margin-top: 6px; }}
 
 .no-events {{
   color: var(--muted);
@@ -283,13 +296,13 @@ footer.foot {{
             parts.append('<div class="no-events">–</div>')
         else:
             for ev in events:
-                badge_cls = "badge all" if ev["is_all_day"] else "badge"
                 loc_html = ""
                 if ev.get("location"):
                     loc_html = f'<div class="meta">{html.escape(ev["location"])}</div>'
+                body_html = f'<div class="summary">{ev["summary"]}</div>{loc_html}'
                 parts.append(
-                    f'<div class="event"><div class="{badge_cls}">{ev["time"]}</div>'
-                    f'<div class="summary">{ev["summary"]}{loc_html}</div></div>'
+                    f'<article class="event"><h3 class="event-time">{ev["time"]}</h3>'
+                    f'<div class="event-body">{body_html}</div></article>'
                 )
 
         parts.append("</div></article>")
