@@ -167,19 +167,57 @@ body {{
 header.topbar {{
   background: linear-gradient(135deg, var(--brand), var(--brand2));
   color: #fff;
-  padding: 24px 36px;
+  padding: 48px 72px 56px;
 }}
-.topbar-inner {{ display: flex; align-items: center; gap: 28px; }}
+.topbar-inner {{
+  display: flex;
+  align-items: center;
+  gap: 48px;
+  max-width: 1480px;
+  margin: 0 auto;
+  flex-wrap: wrap;
+  row-gap: 36px;
+}}
 .logo {{
-  background: #fff;
-  border-radius: 10px;
-  padding: 12px;
+  background: rgba(255, 255, 255, .9);
+  border-radius: 999px;
+  padding: 26px;
+  min-width: 132px;
+  min-height: 132px;
   display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 20px 44px rgba(0,0,0,.18);
 }}
-.logo img {{ width: 40px; height: 40px; display: block; }}
-.headline {{ display: flex; flex-direction: column; gap: 6px; }}
-.title {{ font-weight: 700; font-size: 32px; letter-spacing: .2px; }}
-.sub {{ font-size: 18px; opacity: .95; }}
+.logo img {{ width: 74px; height: 74px; display: block; }}
+.headline {{
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: min(560px, 100%);
+}}
+.headline-text {{
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}}
+.title-meta {{
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: .24px;
+  line-height: 1.14;
+  opacity: .94;
+}}
+.title {{
+  font-weight: 700;
+  font-size: 48px;
+  line-height: 1.08;
+  letter-spacing: .3px;
+}}
+.sub {{
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: .18px;
+  opacity: .92;
+}}
 
 main.container {{ padding: 16px 20px 8px; flex: 1; }}
 
@@ -270,7 +308,10 @@ footer.foot {{
       <img src="https://cdn.riverty.design/logo/riverty-logomark-green.svg" alt="Riverty Logo">
     </div>
     <div class="headline">
-      <div class="title">Öffentlicher Wochenplan (KW {calendar_week})</div>
+      <div class="headline-text">
+        <div class="title">Öffentlicher Wochenplan</div>
+        <div class="title-meta">Kalenderwoche {calendar_week}</div>
+      </div>
       <div class="sub">{date_range_str}</div>
     </div>
   </div>
