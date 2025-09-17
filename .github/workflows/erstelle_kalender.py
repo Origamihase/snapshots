@@ -158,7 +158,7 @@ body {{
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  font: 21px/1.42 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
@@ -177,8 +177,8 @@ header.topbar {{
   display: flex; align-items: center; justify-content: center;
 }}
 .logo img {{ width: 28px; height: 28px; display: block; }}
-.title {{ font-weight: 700; font-size: 22px; letter-spacing: .2px; }}
-.sub {{ font-size: 13px; opacity: .95; }}
+.title {{ font-weight: 700; font-size: 32px; letter-spacing: .2px; }}
+.sub {{ font-size: 18px; opacity: .95; }}
 
 main.container {{ padding: 16px 20px 8px; flex: 1; }}
 
@@ -202,8 +202,8 @@ main.container {{ padding: 16px 20px 8px; flex: 1; }}
   display: flex; align-items: baseline; justify-content: space-between;
   background: linear-gradient(180deg, rgba(0,0,0,.02), transparent);
 }}
-.day-name {{ font-weight: 700; }}
-.day-date {{ color: var(--muted); font-size: 13px; }}
+.day-name {{ font-weight: 700; font-size: 24px; }}
+.day-date {{ color: var(--muted); font-size: 18px; }}
 
 .day.today {{
   border-color: rgba(79,159,90,.55);
@@ -218,13 +218,13 @@ main.container {{ padding: 16px 20px 8px; flex: 1; }}
 .event {{ display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; }}
 
 .badge {{
-  font-weight: 700; font-size: 12px; padding: 4px 8px; border-radius: 999px;
+  font-weight: 700; font-size: 16px; padding: 6px 12px; border-radius: 999px;
   border: 1px solid rgba(79,159,90,.35); background: var(--accent-soft);
   white-space: nowrap;
 }}
 .badge.all {{ border-style: dashed; }}
-.summary {{ font-size: 15px; line-height: 1.35; }}
-.summary .meta {{ font-size: 12px; color: var(--muted); margin-top: 2px; }}
+.summary {{ font-size: 18px; line-height: 1.4; }}
+.summary .meta {{ font-size: 16px; color: var(--muted); margin-top: 4px; }}
 
 .no-events {{ color: var(--muted); text-align: center; padding: 18px 10px 22px; font-style: italic; }}
 
