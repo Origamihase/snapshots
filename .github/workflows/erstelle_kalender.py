@@ -331,10 +331,14 @@ footer.foot {{
         is_today_cls = " today" if current_date == today_local_date else ""
 
         parts.append(
-            f'<article class="day{is_today_cls}" aria-labelledby="d{i}-label">'
-            f'<div class="day-header"><div id="d{i}-label" class="day-name">{day_name}</div>'
-            f'<div class="day-date">{current_date.strftime("%d.%m.")}</div></div>'
-            f'<div class="events">'
+            "".join(
+                [
+                    f'<article class="day{is_today_cls}" aria-labelledby="d{i}-label">',
+                    f'<div class="day-header"><div id="d{i}-label" class="day-name">{day_name}</div>',
+                    f'<div class="day-date">{current_date.strftime("%d.%m.")}</div></div>',
+                    '<div class="events">',
+                ]
+            )
         )
 
         if not events:
@@ -346,8 +350,12 @@ footer.foot {{
                     loc_html = f'<div class="meta">{html.escape(ev["location"])}</div>'
                 body_html = f'<div class="summary">{ev["summary"]}</div>{loc_html}'
                 parts.append(
-                    f'<article class="event"><h3 class="event-time">{ev["time"]}</h3>'
-                    f'<div class="event-body">{body_html}</div></article>'
+                    "".join(
+                        [
+                            f'<article class="event"><h3 class="event-time">{ev["time"]}</h3>',
+                            f'<div class="event-body">{body_html}</div></article>',
+                        ]
+                    )
                 )
 
         parts.append("</div></article>")
