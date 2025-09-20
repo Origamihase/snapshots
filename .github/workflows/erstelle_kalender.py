@@ -66,6 +66,7 @@ def add_event_local(
     summary: str,
     location: str,
     week_days_local: set[date],
+    event_uid: str,
 ) -> None:
     """Fügt ein (ggf. mehrtägiges) Ereignis allen betroffenen lokalen Tagen hinzu."""
     all_day = is_all_day_component(component)
@@ -106,6 +107,7 @@ def add_event_local(
                 "time": time_str,
                 "is_all_day": is_all,
                 "start_time": start_local,  # für Sortierung
+                "uid": event_uid,
             })
         current += timedelta(days=1)
 
@@ -411,7 +413,16 @@ def erstelle_kalender_html() -> None:
         if key in dedup_keys:
             return
         dedup_keys.add(key)
-        add_event_local(week_events, component, occ_start_local, occ_end_local, summary_str, location_str, week_days_local)
+        add_event_local(
+            week_events,
+            component,
+            occ_start_local,
+            occ_end_local,
+            summary_str,
+            location_str,
+            week_days_local,
+            key_id,
+        )
 
     for component in vevents:
         summary_str = ""
@@ -443,8 +454,14 @@ def erstelle_kalender_html() -> None:
                         for ev in events
                         if not (
                             ev.get("start_time") == cancel_start_local
-                            and ev.get("summary") == summary_str
-                            and ev.get("location") == location_str
+                            and (
+                                (uid and ev.get("uid") == uid)
+                                or (
+                                    not uid
+                                    and ev.get("summary") == summary_str
+                                    and ev.get("location") == location_str
+                                )
+                            )
                         )
                     ]
                 continue
