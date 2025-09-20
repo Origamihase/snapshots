@@ -49,11 +49,12 @@ jobs:
           : > public/.nojekyll
           echo "TS=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
           OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-          REPO_LOWER="$(echo "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          REPO_LOWER="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]')"
           if [ "${REPO_LOWER}" = "${OWNER_LOWER}.github.io" ]; then
             echo "BASE_URL=https://${OWNER_LOWER}.github.io" >> "$GITHUB_ENV"
           else
-            echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_LOWER}" >> "$GITHUB_ENV"
+            echo "BASE_URL=https://${OWNER_LOWER}.github.io/${REPO_NAME}" >> "$GITHUB_ENV"
           fi
 
       - name: 5. Kalender-HTML erstellen
