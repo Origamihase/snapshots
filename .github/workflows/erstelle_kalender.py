@@ -392,6 +392,17 @@ def erstelle_kalender_html() -> None:
     # De-Duping über (UID oder summary|location, Startzeit lokal)
     dedup_keys: set[tuple[str, str]] = set()
 
+    # Overrides (RECURRENCE-ID) vorab sammeln
+    vevents = list(cal.walk("VEVENT"))
+    overrides: Dict[tuple[str, datetime], Any] = {}
+    for component in vevents:
+        rec_id_prop = component.get("recurrence-id")
+        if not rec_id_prop:
+            continue
+        uid = str(component.get("uid") or "").strip()
+        rec_local = to_local(rec_id_prop.dt, tz_vienna)
+        overrides[(uid, rec_local)] = component
+
     def add_occurrence(component, occ_start_local: datetime, occ_end_local: datetime, summary_str: str) -> None:
         uid = str(component.get("uid") or "").strip()
         location_str = str(component.get("location") or "").strip()
@@ -402,7 +413,7 @@ def erstelle_kalender_html() -> None:
         dedup_keys.add(key)
         add_event_local(week_events, component, occ_start_local, occ_end_local, summary_str, location_str, week_days_local)
 
-    for component in cal.walk("VEVENT"):
+    for component in vevents:
         summary_str = ""
         try:
             # Titel + Ort
@@ -411,10 +422,10 @@ def erstelle_kalender_html() -> None:
             location_str = str(component.get("location") or "").strip()
             uid = str(component.get("uid") or "").strip()
             status = str(component.get("status") or "").strip().upper()
-
+            rec_id_prop = component.get("recurrence-id")
             dtstart_prop = component.get("dtstart")
+
             if status == "CANCELLED":
-                rec_id_prop = component.get("recurrence-id")
                 if rec_id_prop:
                     cancel_start_local = to_local(rec_id_prop.dt, tz_vienna)
                 elif dtstart_prop:
@@ -438,6 +449,8 @@ def erstelle_kalender_html() -> None:
                     ]
                 continue
 
+            if rec_id_prop:
+                continue
             if not dtstart_prop:
                 continue
 
@@ -475,7 +488,10 @@ def erstelle_kalender_html() -> None:
                 search_end = end_of_week_local_dt
 
                 for occ_start_local in rule.between(search_start, search_end, inc=True):
+                    occ_start_local = to_local(occ_start_local, tz_vienna)
                     if occ_start_local in exdates_local:
+                        continue
+                    if (uid, occ_start_local) in overrides:
                         continue
                     add_occurrence(component, occ_start_local, occ_start_local + duration, summary_str)
             else:
@@ -488,10 +504,44 @@ def erstelle_kalender_html() -> None:
             for r in rdate_list:
                 for d in r.dts:
                     r_local = to_local(d.dt, tz_vienna)
+                    if (uid, r_local) in overrides:
+                        continue
                     add_occurrence(component, r_local, r_local + duration, summary_str)
 
         except Exception as e:
             print(f"Fehler beim Verarbeiten eines Termins ('{summary_str}'): {e}", file=sys.stderr)
+
+    for override_component in overrides.values():
+        summary_str = ""
+        try:
+            status = str(override_component.get("status") or "").strip().upper()
+            if status == "CANCELLED":
+                continue
+
+            raw_summary = str(override_component.get("summary") or "Ohne Titel")
+            summary_str = html.escape(raw_summary)
+
+            dtstart_prop = override_component.get("dtstart")
+            if not dtstart_prop:
+                continue
+
+            occ_start_local = to_local(dtstart_prop.dt, tz_vienna)
+
+            dtend_prop = override_component.get("dtend")
+            duration_prop = override_component.get("duration")
+
+            if not dtend_prop and duration_prop:
+                occ_end_local = occ_start_local + duration_prop.dt
+            else:
+                dtend_raw = dtend_prop.dt if dtend_prop else dtstart_prop.dt
+                occ_end_local = to_local(dtend_raw, tz_vienna)
+
+            add_occurrence(override_component, occ_start_local, occ_end_local, summary_str)
+        except Exception as e:
+            print(
+                f"Fehler beim Verarbeiten eines Override-Termins ('{summary_str}'): {e}",
+                file=sys.stderr,
+            )
 
     # HTML erzeugen & schreiben
     html_str = render_html(week_events, monday_local, friday_local, now_local)
