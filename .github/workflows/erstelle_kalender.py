@@ -66,7 +66,7 @@ def add_event_local(
     summary: str,
     location: str,
     week_days_local: set[date],
-    event_uid: str,
+    event_uid: str | None,
 ) -> None:
     """Fügt ein (ggf. mehrtägiges) Ereignis allen betroffenen lokalen Tagen hinzu."""
     all_day = is_all_day_component(component)
@@ -101,14 +101,16 @@ def add_event_local(
                     time_str = "Ganztägig"
                 is_all = (time_str == "Ganztägig")
 
-            week_events[current].append({
+            event_data = {
                 "summary": summary,
                 "location": location,
                 "time": time_str,
                 "is_all_day": is_all,
                 "start_time": start_local,  # für Sortierung
-                "uid": event_uid,
-            })
+            }
+            if event_uid:
+                event_data["uid"] = event_uid
+            week_events[current].append(event_data)
         current += timedelta(days=1)
 
 
@@ -416,11 +418,11 @@ def erstelle_kalender_html() -> None:
     def add_occurrence(component, occ_start_local: datetime, occ_end_local: datetime, summary_str: str) -> None:
         uid = str(component.get("uid") or "").strip()
         location_str = str(component.get("location") or "").strip()
-        key_id = uid or f"{summary_str}|{location_str}"
-        key = (key_id, occ_start_local.isoformat())
-        if key in dedup_keys:
+        dedup_id = uid or f"{summary_str}|{location_str}"
+        dedup_key = (dedup_id, occ_start_local.isoformat())
+        if dedup_key in dedup_keys:
             return
-        dedup_keys.add(key)
+        dedup_keys.add(dedup_key)
         add_event_local(
             week_events,
             component,
@@ -429,7 +431,7 @@ def erstelle_kalender_html() -> None:
             summary_str,
             location_str,
             week_days_local,
-            key_id,
+            uid if uid else None,
         )
 
     for component in vevents:
@@ -452,26 +454,32 @@ def erstelle_kalender_html() -> None:
                 else:
                     continue
 
-                key_id = uid or f"{summary_str}|{location_str}"
-                key = (key_id, cancel_start_local.isoformat())
-                dedup_keys.discard(key)
+                cancel_key = (
+                    uid if uid else f"{summary_str}|{location_str}",
+                    cancel_start_local.isoformat(),
+                )
+                dedup_keys.discard(cancel_key)
 
                 for events in week_events.values():
-                    events[:] = [
-                        ev
-                        for ev in events
-                        if not (
-                            ev.get("start_time") == cancel_start_local
-                            and (
-                                (uid and ev.get("uid") == uid)
-                                or (
-                                    not uid
-                                    and ev.get("summary") == summary_str
-                                    and ev.get("location") == location_str
-                                )
+                    if uid:
+                        events[:] = [
+                            ev
+                            for ev in events
+                            if not (
+                                ev.get("start_time") == cancel_start_local
+                                and ev.get("uid") == uid
                             )
-                        )
-                    ]
+                        ]
+                    else:
+                        events[:] = [
+                            ev
+                            for ev in events
+                            if not (
+                                ev.get("start_time") == cancel_start_local
+                                and ev.get("summary") == summary_str
+                                and ev.get("location") == location_str
+                            )
+                        ]
                 continue
 
             if rec_id_prop:
