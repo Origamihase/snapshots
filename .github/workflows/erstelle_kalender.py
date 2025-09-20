@@ -403,6 +403,7 @@ def erstelle_kalender_html() -> None:
 
     # De-Duping über (UID oder summary|location, Startzeit lokal)
     dedup_keys: set[tuple[str, str]] = set()
+    cancelled_occurrences: set[tuple[str, str]] = set()
 
     # Overrides (RECURRENCE-ID) vorab sammeln
     vevents = list(cal.walk("VEVENT"))
@@ -420,6 +421,8 @@ def erstelle_kalender_html() -> None:
         location_str = str(component.get("location") or "").strip()
         dedup_id = uid or f"{summary_str}|{location_str}"
         dedup_key = (dedup_id, occ_start_local.isoformat())
+        if dedup_key in cancelled_occurrences:
+            return
         if dedup_key in dedup_keys:
             return
         dedup_keys.add(dedup_key)
@@ -433,6 +436,7 @@ def erstelle_kalender_html() -> None:
             week_days_local,
             uid if uid else None,
         )
+        cancelled_occurrences.discard(dedup_key)
 
     for component in vevents:
         summary_str = ""
@@ -458,6 +462,7 @@ def erstelle_kalender_html() -> None:
                     uid if uid else f"{summary_str}|{location_str}",
                     cancel_start_local.isoformat(),
                 )
+                cancelled_occurrences.add(cancel_key)
                 dedup_keys.discard(cancel_key)
 
                 for events in week_events.values():
