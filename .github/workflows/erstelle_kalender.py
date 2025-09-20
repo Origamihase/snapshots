@@ -406,10 +406,43 @@ def erstelle_kalender_html() -> None:
         summary_str = ""
         try:
             # Titel + Ort
-            summary_str = html.escape(str(component.get("summary") or "Ohne Titel"))
+            raw_summary = str(component.get("summary") or "Ohne Titel")
+            summary_str = html.escape(raw_summary)
+            location_str = str(component.get("location") or "").strip()
+            uid = str(component.get("uid") or "").strip()
+            status = str(component.get("status") or "").strip().upper()
+
+            dtstart_prop = component.get("dtstart")
+            if status == "CANCELLED":
+                rec_id_prop = component.get("recurrence-id")
+                if rec_id_prop:
+                    cancel_start_local = to_local(rec_id_prop.dt, tz_vienna)
+                elif dtstart_prop:
+                    cancel_start_local = to_local(dtstart_prop.dt, tz_vienna)
+                else:
+                    continue
+
+                key_id = uid or f"{summary_str}|{location_str}"
+                key = (key_id, cancel_start_local.isoformat())
+                dedup_keys.discard(key)
+
+                for events in week_events.values():
+                    events[:] = [
+                        ev
+                        for ev in events
+                        if not (
+                            ev.get("start_time") == cancel_start_local
+                            and ev.get("summary") == summary_str
+                            and ev.get("location") == location_str
+                        )
+                    ]
+                continue
+
+            if not dtstart_prop:
+                continue
 
             # Start/Ende (lokal)
-            dtstart_raw = component.get("dtstart").dt
+            dtstart_raw = dtstart_prop.dt
             start_local = to_local(dtstart_raw, tz_vienna)
 
             dtend_prop = component.get("dtend")
